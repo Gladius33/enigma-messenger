@@ -1,0 +1,1 @@
+enigma-messenger provides a core runtime that stitches together identity, storage, transport, and relay for messaging experiences comparable to Telegram or Signal. The workspace exposes a DTO crate for UIs and a core library that manages policy, sessions, and background tasks. Binaries offer a daemon and a minimal CLI for smoke testing.

@@ -1,0 +1,12 @@
+[package]
+name = "enigma-sfu"
+version = "0.0.1"
+edition = "2021"
+authors = ["Sébastien TOUILLEUX (Gladius33)"]
+license = "MIT"
+description = "Stub SFU types"
+repository = "https://github.com/gladius33/enigma-messenger"
+homepage = "https://github.com/gladius33/enigma-messenger"
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }

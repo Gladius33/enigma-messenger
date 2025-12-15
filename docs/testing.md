@@ -1,0 +1,1 @@
+Tests rely on mock transports and in-memory relay implementations to validate identity initialization, messaging flows, attachment chunking, offline relay handling, groups and channels behavior, and policy rejection paths. cargo test exercises these scenarios without external services.

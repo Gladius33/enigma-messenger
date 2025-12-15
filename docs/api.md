@@ -1,0 +1,1 @@
+enigma-api exposes DTOs for UIs and external callers. Types include identifiers, message kinds, message requests and events, and descriptors for groups and channels. Validation helpers enforce formatting and limits before requests reach the core. Structures deny unknown fields to maintain forward-compatibility contracts.

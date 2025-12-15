@@ -1,0 +1,1 @@
+The relay module wraps pulling and pushing opaque envelopes for offline delivery. A poller fetches envelopes for the local user, persists them, emits events, and acknowledges receipt. Transport mode can prefer WebRTC, relay, or hybrid routing with fallback. Relay envelopes may carry attachment chunks or message frames.

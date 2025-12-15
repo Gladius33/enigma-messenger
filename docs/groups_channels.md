@@ -1,0 +1,1 @@
+Groups support membership roles (Owner, Admin, Member, ReadOnly) and membership change events. Group encryption uses per-recipient fanout for now, while exposing a provider hook for future sender-key distribution. Channels provide broadcast posting by admins, subscriber delivery, and moderation controls including deletion and pinning.

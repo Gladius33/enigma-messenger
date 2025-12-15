@@ -1,0 +1,1 @@
+Extension traits cover future mini-app hosting, email gateways, and cloud sync backends. Implementations can register with the core without altering the runtime API, preserving modularity for additional products.

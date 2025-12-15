@@ -1,0 +1,19 @@
+[package]
+name = "enigma-cli"
+version = "0.0.1"
+edition = "2021"
+authors = ["Sébastien TOUILLEUX (Gladius33)"]
+license = "MIT"
+description = "CLI for enigma-core smoke testing"
+repository = "https://github.com/gladius33/enigma-messenger"
+homepage = "https://github.com/gladius33/enigma-messenger"
+
+[dependencies]
+enigma-core = { path = "../../crates/enigma-core" }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+enigma-node-client = { path = "../../vendor/enigma-node-client" }
+enigma-relay = { path = "../../vendor/enigma-relay" }
+enigma-storage = { path = "../../vendor/enigma-storage" }
+enigma-api = { path = "../../crates/enigma-api" }

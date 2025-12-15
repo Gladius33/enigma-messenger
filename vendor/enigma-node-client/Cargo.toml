@@ -1,0 +1,18 @@
+[package]
+name = "enigma-node-client"
+version = "0.0.1"
+edition = "2021"
+authors = ["Sébastien TOUILLEUX (Gladius33)"]
+license = "MIT"
+description = "Stub node client"
+repository = "https://github.com/gladius33/enigma-messenger"
+homepage = "https://github.com/gladius33/enigma-messenger"
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+uuid = { workspace = true }
+enigma-node-types = { path = "../enigma-node-types" }
+async-trait = { workspace = true }

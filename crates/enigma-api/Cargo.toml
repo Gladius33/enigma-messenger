@@ -1,0 +1,16 @@
+[package]
+name = "enigma-api"
+version = "0.0.1"
+edition = "2021"
+authors = ["Sébastien TOUILLEUX (Gladius33)"]
+license = "MIT"
+description = "DTOs and validation for Enigma messenger"
+repository = "https://github.com/gladius33/enigma-messenger"
+homepage = "https://github.com/gladius33/enigma-messenger"
+documentation = "https://docs.rs/enigma-api"
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }

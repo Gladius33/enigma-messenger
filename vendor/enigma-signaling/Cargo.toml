@@ -1,0 +1,13 @@
+[package]
+name = "enigma-signaling"
+version = "0.0.1"
+edition = "2021"
+authors = ["Sébastien TOUILLEUX (Gladius33)"]
+license = "MIT"
+description = "Stub signaling"
+repository = "https://github.com/gladius33/enigma-messenger"
+homepage = "https://github.com/gladius33/enigma-messenger"
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+thiserror = { workspace = true }

@@ -1,0 +1,1 @@
+Storage uses a pluggable key provider; callers supply key material suitable for the platform. The core opens an encrypted store under a namespace and persists identity, sessions, and message indices. Attachment chunk metadata is persisted so large payloads can resume.
