@@ -26,5 +26,5 @@ hex = { workspace = true }
 base64 = "0.21"
 enigma-api = { path = "../enigma-api", version = "0.0.1" }
 enigma-node-types = { version = "0.0.1" }
-enigma-aead = { version = "0.1.1" }
+enigma-aead = { version = "0.1.0" }
 enigma-storage = { version = "0.0.1" }
