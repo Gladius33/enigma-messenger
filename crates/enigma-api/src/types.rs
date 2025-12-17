@@ -144,30 +144,40 @@ impl Default for ValidationLimits {
 
 impl UserHandle {
     pub fn new(value: impl Into<String>) -> Self {
-        Self { value: value.into() }
+        Self {
+            value: value.into(),
+        }
     }
 }
 
 impl UserIdHex {
     pub fn new(value: impl Into<String>) -> Self {
-        Self { value: value.into() }
+        Self {
+            value: value.into(),
+        }
     }
 }
 
 impl ConversationId {
     pub fn new(value: impl Into<String>) -> Self {
-        Self { value: value.into() }
+        Self {
+            value: value.into(),
+        }
     }
 }
 
 impl MessageId {
     pub fn random() -> Self {
-        Self { value: Uuid::new_v4() }
+        Self {
+            value: Uuid::new_v4(),
+        }
     }
 }
 
 impl AttachmentId {
     pub fn random() -> Self {
-        Self { value: Uuid::new_v4() }
+        Self {
+            value: Uuid::new_v4(),
+        }
     }
 }

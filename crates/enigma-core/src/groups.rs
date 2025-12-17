@@ -1,7 +1,9 @@
 use crate::error::CoreError;
 use crate::ids::ConversationId as CoreConversationId;
 use crate::policy::Policy;
-use enigma_api::types::{ConversationId as ApiConversationId, GroupDto, GroupMember, GroupRole, UserIdHex};
+use enigma_api::types::{
+    ConversationId as ApiConversationId, GroupDto, GroupMember, GroupRole, UserIdHex,
+};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -41,7 +43,9 @@ impl GroupState {
         if name.len() > self.policy.max_group_name_len {
             return Err(CoreError::Validation("group_name".to_string()));
         }
-        let id = ApiConversationId { value: Uuid::new_v4().to_string() };
+        let id = ApiConversationId {
+            value: Uuid::new_v4().to_string(),
+        };
         let dto = GroupDto {
             id,
             name,
@@ -58,7 +62,11 @@ impl GroupState {
         Ok(dto)
     }
 
-    pub async fn add_member(&self, id: &CoreConversationId, member: GroupMember) -> Result<(), CoreError> {
+    pub async fn add_member(
+        &self,
+        id: &CoreConversationId,
+        member: GroupMember,
+    ) -> Result<(), CoreError> {
         let mut guard = self.groups.lock().await;
         let group = guard.get_mut(&id.value).ok_or(CoreError::NotFound)?;
         if group.members.len() as u32 >= self.policy.max_membership_changes_per_minute {
@@ -70,7 +78,11 @@ impl GroupState {
         Ok(())
     }
 
-    pub async fn remove_member(&self, id: &CoreConversationId, user_id: &UserIdHex) -> Result<(), CoreError> {
+    pub async fn remove_member(
+        &self,
+        id: &CoreConversationId,
+        user_id: &UserIdHex,
+    ) -> Result<(), CoreError> {
         let mut guard = self.groups.lock().await;
         let group = guard.get_mut(&id.value).ok_or(CoreError::NotFound)?;
         group.members.retain(|m| &m.user_id != user_id);
@@ -80,5 +92,9 @@ impl GroupState {
     pub async fn get(&self, id: &CoreConversationId) -> Option<GroupDto> {
         let guard = self.groups.lock().await;
         guard.get(&id.value).cloned()
+    }
+
+    pub async fn len(&self) -> usize {
+        self.groups.lock().await.len()
     }
 }

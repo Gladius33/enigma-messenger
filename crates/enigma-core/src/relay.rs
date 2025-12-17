@@ -20,7 +20,10 @@ impl RelayGateway {
     }
 
     pub async fn push(&self, envelope: RelayEnvelope) -> Result<(), CoreError> {
-        self.client.push(envelope).await.map_err(|e| CoreError::Relay(format!("{:?}", e)))
+        self.client
+            .push(envelope)
+            .await
+            .map_err(|e| CoreError::Relay(format!("{:?}", e)))
     }
 
     pub async fn pull(&self, recipient: &str) -> Result<Vec<RelayEnvelope>, CoreError> {
@@ -49,5 +52,9 @@ impl RelayGateway {
         let out = guard.clone();
         guard.clear();
         out
+    }
+
+    pub async fn pending_len(&self) -> usize {
+        self.pending.lock().await.len()
     }
 }

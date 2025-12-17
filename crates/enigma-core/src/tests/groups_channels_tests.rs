@@ -1,9 +1,11 @@
 use super::{base_config, key_provider, temp_path};
 use crate::config::TransportMode;
-use crate::policy::Policy;
 use crate::messaging::MockTransport;
+use crate::policy::Policy;
 use crate::Core;
-use enigma_api::types::{ConversationId, MessageId, MessageKind, OutgoingMessageRequest, UserIdHex};
+use enigma_api::types::{
+    ConversationId, MessageId, MessageKind, OutgoingMessageRequest, UserIdHex,
+};
 use enigma_node_client::InMemoryRegistry;
 use enigma_relay::InMemoryRelay;
 use std::sync::Arc;
@@ -34,16 +36,30 @@ async fn group_and_channel_rules_apply() {
     .await
     .expect("core b");
     let mut rx_b = core_b.subscribe();
-    let group_id = core_a.create_group("team".to_string()).await.expect("group");
+    let group_id = core_a
+        .create_group("team".to_string())
+        .await
+        .expect("group");
     core_a
-        .add_group_member(&group_id, UserIdHex { value: core_b.local_identity().user_id.to_hex() })
+        .add_group_member(
+            &group_id,
+            UserIdHex {
+                value: core_b.local_identity().user_id.to_hex(),
+            },
+        )
         .await
         .expect("add member");
     let group_req = OutgoingMessageRequest {
         client_message_id: MessageId::random(),
-        conversation_id: ConversationId { value: group_id.value.clone() },
-        sender: UserIdHex { value: core_a.local_identity().user_id.to_hex() },
-        recipients: vec![UserIdHex { value: core_b.local_identity().user_id.to_hex() }],
+        conversation_id: ConversationId {
+            value: group_id.value.clone(),
+        },
+        sender: UserIdHex {
+            value: core_a.local_identity().user_id.to_hex(),
+        },
+        recipients: vec![UserIdHex {
+            value: core_b.local_identity().user_id.to_hex(),
+        }],
         kind: MessageKind::Text,
         text: Some("hello group".to_string()),
         attachment: None,
@@ -55,12 +71,21 @@ async fn group_and_channel_rules_apply() {
     core_b.poll_once().await.expect("poll group");
     let event = rx_b.recv().await.expect("group event");
     assert_eq!(event.text.as_deref(), Some("hello group"));
-    let channel_id = core_a.create_channel("updates".to_string()).await.expect("channel");
+    let channel_id = core_a
+        .create_channel("updates".to_string())
+        .await
+        .expect("channel");
     let bad_req = OutgoingMessageRequest {
         client_message_id: MessageId::random(),
-        conversation_id: ConversationId { value: channel_id.value.clone() },
-        sender: UserIdHex { value: core_b.local_identity().user_id.to_hex() },
-        recipients: vec![UserIdHex { value: core_a.local_identity().user_id.to_hex() }],
+        conversation_id: ConversationId {
+            value: channel_id.value.clone(),
+        },
+        sender: UserIdHex {
+            value: core_b.local_identity().user_id.to_hex(),
+        },
+        recipients: vec![UserIdHex {
+            value: core_a.local_identity().user_id.to_hex(),
+        }],
         kind: MessageKind::ChannelPost,
         text: Some("blocked".to_string()),
         attachment: None,

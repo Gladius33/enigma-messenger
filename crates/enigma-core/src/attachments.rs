@@ -37,7 +37,10 @@ impl AttachmentAssembler {
     }
 
     pub fn ingest(&mut self, chunk: AttachmentChunk) -> Option<Vec<u8>> {
-        let entry = self.pending.entry(chunk.attachment_id).or_insert_with(Vec::new);
+        let entry = self
+            .pending
+            .entry(chunk.attachment_id)
+            .or_insert_with(Vec::new);
         entry.push(chunk.clone());
         if entry.iter().any(|c| c.is_last) {
             let data = reassemble_attachment(entry)?;

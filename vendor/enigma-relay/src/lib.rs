@@ -7,7 +7,7 @@ use tokio::sync::Mutex;
 
 #[derive(Debug, Error)]
 pub enum RelayError {
-    #[error("network")] 
+    #[error("network")]
     Network,
 }
 
@@ -33,7 +33,10 @@ impl InMemoryRelay {
 impl RelayClient for InMemoryRelay {
     async fn push(&self, envelope: RelayEnvelope) -> Result<(), RelayError> {
         let mut guard = self.entries.lock().await;
-        guard.entry(envelope.recipient.clone()).or_default().push(envelope);
+        guard
+            .entry(envelope.recipient.clone())
+            .or_default()
+            .push(envelope);
         Ok(())
     }
 

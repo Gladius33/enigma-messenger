@@ -67,7 +67,11 @@ impl ConversationId {
 }
 
 pub fn conversation_id_for_dm(a: &UserId, b: &UserId) -> ConversationId {
-    let (left, right) = if a.as_bytes() <= b.as_bytes() { (a, b) } else { (b, a) };
+    let (left, right) = if a.as_bytes() <= b.as_bytes() {
+        (a, b)
+    } else {
+        (b, a)
+    };
     let mut hasher = Hasher::new();
     hasher.update(b"enigma:conv:dm:v1");
     hasher.update(left.as_bytes());

@@ -11,6 +11,6 @@ pub struct SignalMessage {
 
 #[derive(Debug, Error)]
 pub enum SignalingError {
-    #[error("unavailable")] 
+    #[error("unavailable")]
     Unavailable,
 }

@@ -1,3 +1,6 @@
+use enigma_api::types::{
+    ConversationId, MessageId, MessageKind, OutgoingMessageRequest, UserIdHex,
+};
 use enigma_core::config::{CoreConfig, TransportMode};
 use enigma_core::messaging::MockTransport;
 use enigma_core::policy::Policy;
@@ -5,7 +8,6 @@ use enigma_core::{ids::UserId, Core};
 use enigma_node_client::InMemoryRegistry;
 use enigma_relay::InMemoryRelay;
 use enigma_storage::KeyProvider;
-use enigma_api::types::{ConversationId, MessageId, MessageKind, OutgoingMessageRequest, UserIdHex};
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -28,13 +30,24 @@ async fn main() {
     let registry = Arc::new(InMemoryRegistry::new());
     let relay = Arc::new(InMemoryRelay::new());
     let transport = Arc::new(MockTransport::new());
-    let core = Core::init(config, Policy::default(), Arc::new(CliKey), registry, relay, transport)
-        .await
-        .expect("cli init");
+    let core = Core::init(
+        config,
+        Policy::default(),
+        Arc::new(CliKey),
+        registry,
+        relay,
+        transport,
+    )
+    .await
+    .expect("cli init");
     match command {
         "init" => {
             let identity = core.local_identity();
-            println!("initialized {} {}", identity.user_id.to_hex(), identity.device_id);
+            println!(
+                "initialized {} {}",
+                identity.user_id.to_hex(),
+                identity.device_id
+            );
         }
         "send-text" => {
             if args.len() < 4 {
@@ -47,9 +60,15 @@ async fn main() {
                 let conv = core.dm_conversation(&recipient_user);
                 let request = OutgoingMessageRequest {
                     client_message_id: MessageId::random(),
-                    conversation_id: ConversationId { value: conv.value.clone() },
-                    sender: UserIdHex { value: core.local_identity().user_id.to_hex() },
-                    recipients: vec![UserIdHex { value: recipient_hex.clone() }],
+                    conversation_id: ConversationId {
+                        value: conv.value.clone(),
+                    },
+                    sender: UserIdHex {
+                        value: core.local_identity().user_id.to_hex(),
+                    },
+                    recipients: vec![UserIdHex {
+                        value: recipient_hex.clone(),
+                    }],
                     kind: MessageKind::Text,
                     text: Some(text),
                     attachment: None,

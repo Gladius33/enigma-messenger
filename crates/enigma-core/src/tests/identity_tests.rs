@@ -1,8 +1,8 @@
 use super::{base_config, key_provider, temp_path};
-use crate::policy::Policy;
-use crate::Core;
 use crate::config::TransportMode;
 use crate::messaging::MockTransport;
+use crate::policy::Policy;
+use crate::Core;
 use enigma_node_client::InMemoryRegistry;
 use enigma_relay::InMemoryRelay;
 use std::sync::Arc;

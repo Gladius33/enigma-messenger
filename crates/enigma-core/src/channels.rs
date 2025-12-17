@@ -25,7 +25,9 @@ impl ChannelState {
         if name.len() > self.policy.max_channel_name_len {
             return Err(CoreError::Validation("channel_name".to_string()));
         }
-        let id = ApiConversationId { value: Uuid::new_v4().to_string() };
+        let id = ApiConversationId {
+            value: Uuid::new_v4().to_string(),
+        };
         let dto = ChannelDto {
             id,
             name,
@@ -39,7 +41,11 @@ impl ChannelState {
         Ok(dto)
     }
 
-    pub async fn add_subscriber(&self, id: &CoreConversationId, user: UserIdHex) -> Result<(), CoreError> {
+    pub async fn add_subscriber(
+        &self,
+        id: &CoreConversationId,
+        user: UserIdHex,
+    ) -> Result<(), CoreError> {
         let mut guard = self.channels.lock().await;
         let channel = guard.get_mut(&id.value).ok_or(CoreError::NotFound)?;
         if !channel.subscribers.iter().any(|m| m == &user) {
@@ -48,7 +54,11 @@ impl ChannelState {
         Ok(())
     }
 
-    pub async fn add_admin(&self, id: &CoreConversationId, user: UserIdHex) -> Result<(), CoreError> {
+    pub async fn add_admin(
+        &self,
+        id: &CoreConversationId,
+        user: UserIdHex,
+    ) -> Result<(), CoreError> {
         let mut guard = self.channels.lock().await;
         let channel = guard.get_mut(&id.value).ok_or(CoreError::NotFound)?;
         if !channel.admins.iter().any(|m| m == &user) {
@@ -71,5 +81,9 @@ impl ChannelState {
     pub async fn get(&self, id: &CoreConversationId) -> Option<ChannelDto> {
         let guard = self.channels.lock().await;
         guard.get(&id.value).cloned()
+    }
+
+    pub async fn len(&self) -> usize {
+        self.channels.lock().await.len()
     }
 }

@@ -6,13 +6,14 @@ use tokio::sync::Mutex;
 
 #[derive(Debug, Error)]
 pub enum ClientError {
-    #[error("network")] 
+    #[error("network")]
     Network,
 }
 
 #[async_trait]
 pub trait RegistryClient: Send + Sync {
     async fn register(&self, identity: PublicIdentity) -> Result<(), ClientError>;
+    fn endpoints(&self) -> Vec<String>;
 }
 
 #[derive(Clone, Default)]
@@ -34,9 +35,16 @@ impl InMemoryRegistry {
 impl RegistryClient for InMemoryRegistry {
     async fn register(&self, identity: PublicIdentity) -> Result<(), ClientError> {
         let mut guard = self.identities.lock().await;
-        if !guard.iter().any(|item| item.user_id == identity.user_id && item.device_id == identity.device_id) {
+        if !guard
+            .iter()
+            .any(|item| item.user_id == identity.user_id && item.device_id == identity.device_id)
+        {
             guard.push(identity);
         }
         Ok(())
+    }
+
+    fn endpoints(&self) -> Vec<String> {
+        Vec::new()
     }
 }

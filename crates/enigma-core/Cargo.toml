@@ -11,6 +11,7 @@ documentation = "https://docs.rs/enigma-core"
 
 [features]
 default = []
+dev = []
 sfu = ["enigma-sfu"]
 metrics = []
 

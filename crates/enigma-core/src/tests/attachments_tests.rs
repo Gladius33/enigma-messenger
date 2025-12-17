@@ -11,7 +11,9 @@ fn chunking_reassembles_large_payloads() {
         content_type: "application/octet-stream".to_string(),
         total_size: 3 * policy.max_attachment_chunk_bytes as u64 + 10,
     };
-    let data: Vec<u8> = (0..(descriptor.total_size as usize)).map(|i| (i % 255) as u8).collect();
+    let data: Vec<u8> = (0..(descriptor.total_size as usize))
+        .map(|i| (i % 255) as u8)
+        .collect();
     let chunks = prepare_chunks(&descriptor, &data, &policy).expect("chunks");
     let mut assembler = AttachmentAssembler::new();
     let mut last = None;

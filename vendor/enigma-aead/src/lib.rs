@@ -31,7 +31,11 @@ impl AeadKey {
         out
     }
 
-    pub fn open(&self, ciphertext: &[u8], associated_data_len: usize) -> Result<Vec<u8>, AeadError> {
+    pub fn open(
+        &self,
+        ciphertext: &[u8],
+        associated_data_len: usize,
+    ) -> Result<Vec<u8>, AeadError> {
         if ciphertext.len() < associated_data_len {
             return Err(AeadError::Decryption);
         }

@@ -27,7 +27,10 @@ pub enum WireEnvelope {
 }
 
 pub fn build_frame(message: PlainMessage, key: &AeadKey) -> Result<MessageFrame, CoreError> {
-    let associated = format!("{}:{}:{}", message.conversation_id, message.message_id, message.sender);
+    let associated = format!(
+        "{}:{}:{}",
+        message.conversation_id, message.message_id, message.sender
+    );
     let plaintext = serde_json::to_vec(&message).map_err(|_| CoreError::Crypto)?;
     let ciphertext = key.seal(&plaintext, associated.as_bytes());
     Ok(MessageFrame {

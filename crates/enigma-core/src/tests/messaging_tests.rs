@@ -1,9 +1,11 @@
 use super::{base_config, key_provider, temp_path};
 use crate::config::TransportMode;
+use crate::messaging::MockTransport;
 use crate::policy::Policy;
 use crate::Core;
-use crate::messaging::MockTransport;
-use enigma_api::types::{ConversationId, MessageId, MessageKind, OutgoingMessageRequest, UserIdHex};
+use enigma_api::types::{
+    ConversationId, MessageId, MessageKind, OutgoingMessageRequest, UserIdHex,
+};
 use enigma_node_client::InMemoryRegistry;
 use enigma_relay::InMemoryRelay;
 use serde_json::json;
@@ -38,9 +40,15 @@ async fn send_and_receive_text_with_edits_and_deletes() {
     let mut rx_b = core_b.subscribe();
     let req = OutgoingMessageRequest {
         client_message_id: MessageId::random(),
-        conversation_id: ConversationId { value: conv.value.clone() },
-        sender: UserIdHex { value: core_a.local_identity().user_id.to_hex() },
-        recipients: vec![UserIdHex { value: core_b.local_identity().user_id.to_hex() }],
+        conversation_id: ConversationId {
+            value: conv.value.clone(),
+        },
+        sender: UserIdHex {
+            value: core_a.local_identity().user_id.to_hex(),
+        },
+        recipients: vec![UserIdHex {
+            value: core_b.local_identity().user_id.to_hex(),
+        }],
         kind: MessageKind::Text,
         text: Some("hello".to_string()),
         attachment: None,
@@ -56,9 +64,15 @@ async fn send_and_receive_text_with_edits_and_deletes() {
     assert!(!event.deleted);
     let edit_req = OutgoingMessageRequest {
         client_message_id: event.message_id.clone(),
-        conversation_id: ConversationId { value: conv.value.clone() },
-        sender: UserIdHex { value: core_a.local_identity().user_id.to_hex() },
-        recipients: vec![UserIdHex { value: core_b.local_identity().user_id.to_hex() }],
+        conversation_id: ConversationId {
+            value: conv.value.clone(),
+        },
+        sender: UserIdHex {
+            value: core_a.local_identity().user_id.to_hex(),
+        },
+        recipients: vec![UserIdHex {
+            value: core_b.local_identity().user_id.to_hex(),
+        }],
         kind: MessageKind::Text,
         text: Some("hello-edited".to_string()),
         attachment: None,
@@ -72,9 +86,15 @@ async fn send_and_receive_text_with_edits_and_deletes() {
     assert!(edited.edited);
     let delete_req = OutgoingMessageRequest {
         client_message_id: MessageId::random(),
-        conversation_id: ConversationId { value: conv.value.clone() },
-        sender: UserIdHex { value: core_a.local_identity().user_id.to_hex() },
-        recipients: vec![UserIdHex { value: core_b.local_identity().user_id.to_hex() }],
+        conversation_id: ConversationId {
+            value: conv.value.clone(),
+        },
+        sender: UserIdHex {
+            value: core_a.local_identity().user_id.to_hex(),
+        },
+        recipients: vec![UserIdHex {
+            value: core_b.local_identity().user_id.to_hex(),
+        }],
         kind: MessageKind::System,
         text: None,
         attachment: None,

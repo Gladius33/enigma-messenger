@@ -1,10 +1,13 @@
 use super::{base_config, key_provider, temp_path};
 use crate::config::TransportMode;
-use crate::policy::Policy;
-use crate::Core;
 use crate::messaging::MockTransport;
 use crate::packet::deserialize_envelope;
-use enigma_api::types::{AttachmentDescriptor, AttachmentId, ConversationId, MessageId, MessageKind, OutgoingMessageRequest, UserIdHex};
+use crate::policy::Policy;
+use crate::Core;
+use enigma_api::types::{
+    AttachmentDescriptor, AttachmentId, ConversationId, MessageId, MessageKind,
+    OutgoingMessageRequest, UserIdHex,
+};
 use enigma_node_client::InMemoryRegistry;
 use enigma_relay::InMemoryRelay;
 use serde_json::json;
@@ -29,9 +32,15 @@ async fn oversize_text_is_rejected() {
     .expect("core");
     let req = OutgoingMessageRequest {
         client_message_id: MessageId::random(),
-        conversation_id: ConversationId { value: "neg".to_string() },
-        sender: UserIdHex { value: core.local_identity().user_id.to_hex() },
-        recipients: vec![UserIdHex { value: core.local_identity().user_id.to_hex() }],
+        conversation_id: ConversationId {
+            value: "neg".to_string(),
+        },
+        sender: UserIdHex {
+            value: core.local_identity().user_id.to_hex(),
+        },
+        recipients: vec![UserIdHex {
+            value: core.local_identity().user_id.to_hex(),
+        }],
         kind: MessageKind::Text,
         text: Some("toolong".to_string()),
         attachment: None,
@@ -69,9 +78,15 @@ async fn attachments_disabled_policy() {
     };
     let req = OutgoingMessageRequest {
         client_message_id: MessageId::random(),
-        conversation_id: ConversationId { value: "neg2".to_string() },
-        sender: UserIdHex { value: core.local_identity().user_id.to_hex() },
-        recipients: vec![UserIdHex { value: core.local_identity().user_id.to_hex() }],
+        conversation_id: ConversationId {
+            value: "neg2".to_string(),
+        },
+        sender: UserIdHex {
+            value: core.local_identity().user_id.to_hex(),
+        },
+        recipients: vec![UserIdHex {
+            value: core.local_identity().user_id.to_hex(),
+        }],
         kind: MessageKind::File,
         text: None,
         attachment: Some(descriptor),

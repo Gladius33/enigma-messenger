@@ -1,5 +1,5 @@
 use crate::error::CoreError;
-use crate::ids::{UserId, DeviceId};
+use crate::ids::{DeviceId, UserId};
 use blake3::Hasher;
 use enigma_node_types::PublicIdentity;
 use enigma_storage::EncryptedStore;
@@ -22,9 +22,13 @@ struct StoredIdentity {
 }
 
 impl LocalIdentity {
-    pub fn load_or_create(store: &mut EncryptedStore, username_hint: Option<String>) -> Result<Self, CoreError> {
+    pub fn load_or_create(
+        store: &mut EncryptedStore,
+        username_hint: Option<String>,
+    ) -> Result<Self, CoreError> {
         if let Some(bytes) = store.get("identity") {
-            let stored: StoredIdentity = serde_json::from_slice(&bytes).map_err(|_| CoreError::Storage)?;
+            let stored: StoredIdentity =
+                serde_json::from_slice(&bytes).map_err(|_| CoreError::Storage)?;
             if let Some(user_id) = UserId::from_hex(&stored.user_id_hex) {
                 let identity = Self {
                     device_id: stored.device_id,

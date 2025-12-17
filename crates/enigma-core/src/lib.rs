@@ -17,11 +17,20 @@ pub mod session;
 pub mod sync;
 pub mod time;
 
+#[cfg(feature = "dev")]
+mod introspection;
+
+#[cfg(feature = "dev")]
+pub use introspection::{CoreStats, RegistryStatus, StoreHealth};
+
 use attachments::{prepare_chunks, AttachmentAssembler};
 use channels::ChannelState;
 use config::{CoreConfig, TransportMode};
 use directory::{register_identity, ContactDirectory};
-use enigma_api::types::{ConversationId as ApiConversationId, IncomingMessageEvent, MessageId, OutgoingMessageRequest, ReceiptStatus, UserIdHex, ValidationLimits};
+use enigma_api::types::{
+    ConversationId as ApiConversationId, IncomingMessageEvent, MessageId, OutgoingMessageRequest,
+    ReceiptStatus, UserIdHex, ValidationLimits,
+};
 use enigma_node_client::RegistryClient;
 use enigma_node_types::{EnvelopePayload, RelayEnvelope};
 use enigma_relay::RelayClient;
@@ -32,14 +41,16 @@ use groups::{GroupState, NullGroupCryptoProvider};
 use identity::LocalIdentity;
 use ids::{conversation_id_for_dm, ConversationId, UserId};
 use messaging::{MockTransport, Transport};
-use packet::{build_frame, decode_frame, deserialize_envelope, serialize_envelope, PlainMessage, WireEnvelope};
+use packet::{
+    build_frame, decode_frame, deserialize_envelope, serialize_envelope, PlainMessage, WireEnvelope,
+};
 use policy::Policy;
 use relay::RelayGateway;
 use session::SessionManager;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use time::now_ms;
+use tokio::sync::Mutex;
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -69,8 +80,12 @@ impl Core {
         relay_client: Arc<dyn RelayClient>,
         transport: Arc<dyn Transport>,
     ) -> Result<Self, CoreError> {
-        let mut store = EncryptedStore::open_or_create(&config.storage_path, &config.namespace, key_provider.as_ref())
-            .map_err(|_| CoreError::Storage)?;
+        let mut store = EncryptedStore::open_or_create(
+            &config.storage_path,
+            &config.namespace,
+            key_provider.as_ref(),
+        )
+        .map_err(|_| CoreError::Storage)?;
         let identity = LocalIdentity::load_or_create(&mut store, config.device_name.clone())?;
         let sessions = SessionManager::new(identity.user_id.clone());
         let core = Self {
@@ -89,7 +104,12 @@ impl Core {
             groups: GroupState::new(policy.clone(), Arc::new(NullGroupCryptoProvider)),
             channels: ChannelState::new(policy.clone()),
         };
-        register_identity(registry, &identity).await?;
+        {
+            let guard = core.store.lock().await;
+            let _ = guard.get("identity");
+        }
+        let _ = core.directory.lookup(&identity.user_id.to_hex());
+        register_identity(core.registry.clone(), &identity).await?;
         core.start_relay_poller();
         Ok(core)
     }
@@ -102,7 +122,10 @@ impl Core {
         self.identity.clone()
     }
 
-    pub async fn send_message(&self, request: OutgoingMessageRequest) -> Result<MessageId, CoreError> {
+    pub async fn send_message(
+        &self,
+        request: OutgoingMessageRequest,
+    ) -> Result<MessageId, CoreError> {
         let limits = ValidationLimits {
             max_text_bytes: self.policy.max_text_bytes,
             max_name_len: self.policy.max_group_name_len,
@@ -116,7 +139,11 @@ impl Core {
                 .get(&conversation)
                 .await
                 .ok_or(CoreError::Validation("channel_unknown".to_string()))?;
-            if !channel.admins.iter().any(|a| a.value == request.sender.value) {
+            if !channel
+                .admins
+                .iter()
+                .any(|a| a.value == request.sender.value)
+            {
                 return Err(CoreError::Validation("channel_post_denied".to_string()));
             }
         }
@@ -136,7 +163,8 @@ impl Core {
         }
         let sender_hex = request.sender.value.clone();
         for recipient in request.recipients.iter() {
-            let recipient_user = UserId::from_hex(&recipient.value).ok_or(CoreError::Validation("recipient".to_string()))?;
+            let recipient_user = UserId::from_hex(&recipient.value)
+                .ok_or(CoreError::Validation("recipient".to_string()))?;
             let key = {
                 let mut sessions = self.sessions.lock().await;
                 sessions.next_key(&recipient_user)?
@@ -182,7 +210,12 @@ impl Core {
         Ok(request.client_message_id.clone())
     }
 
-    async fn route_bytes(&self, recipient: &UserIdHex, bytes: Vec<u8>, is_attachment: bool) -> Result<(), CoreError> {
+    async fn route_bytes(
+        &self,
+        recipient: &UserIdHex,
+        bytes: Vec<u8>,
+        is_attachment: bool,
+    ) -> Result<(), CoreError> {
         let payload = if is_attachment {
             EnvelopePayload::AttachmentChunk(bytes.clone())
         } else {
@@ -193,13 +226,12 @@ impl Core {
                 let env = RelayEnvelope::new(recipient.value.clone(), payload);
                 self.relay.push(env).await?
             }
-            TransportMode::P2PWebRTC => {
-                self.transport
-                    .send(recipient.value.clone(), bytes)
-                    .await?
-            }
+            TransportMode::P2PWebRTC => self.transport.send(recipient.value.clone(), bytes).await?,
             TransportMode::Hybrid => {
-                let send_result = self.transport.send(recipient.value.clone(), bytes.clone()).await;
+                let send_result = self
+                    .transport
+                    .send(recipient.value.clone(), bytes.clone())
+                    .await;
                 if send_result.is_err() {
                     let env = RelayEnvelope::new(recipient.value.clone(), payload);
                     self.relay.push(env).await?;
@@ -216,7 +248,10 @@ impl Core {
     }
 
     async fn process_transport(&self) -> Result<(), CoreError> {
-        let messages = self.transport.receive(&self.identity.user_id.to_hex()).await?;
+        let messages = self
+            .transport
+            .receive(&self.identity.user_id.to_hex())
+            .await?;
         for msg in messages {
             self.handle_incoming_bytes(msg.bytes, false).await?;
         }
@@ -239,12 +274,18 @@ impl Core {
             }
         }
         if !ack_ids.is_empty() {
-            self.relay.ack(&self.identity.user_id.to_hex(), &ack_ids).await?;
+            self.relay
+                .ack(&self.identity.user_id.to_hex(), &ack_ids)
+                .await?;
         }
         Ok(())
     }
 
-    async fn handle_incoming_bytes(&self, bytes: Vec<u8>, _from_relay: bool) -> Result<(), CoreError> {
+    async fn handle_incoming_bytes(
+        &self,
+        bytes: Vec<u8>,
+        _from_relay: bool,
+    ) -> Result<(), CoreError> {
         let envelope = deserialize_envelope(&bytes)?;
         match envelope {
             WireEnvelope::Message(frame) => {
@@ -254,9 +295,15 @@ impl Core {
                         let key = sessions.next_key(&sender_user)?;
                         let message = decode_frame(&frame, &key)?;
                         let event = IncomingMessageEvent {
-                            message_id: MessageId { value: message.message_id },
-                            conversation_id: ApiConversationId { value: message.conversation_id.clone() },
-                            sender: UserIdHex { value: message.sender.clone() },
+                            message_id: MessageId {
+                                value: message.message_id,
+                            },
+                            conversation_id: ApiConversationId {
+                                value: message.conversation_id.clone(),
+                            },
+                            sender: UserIdHex {
+                                value: message.sender.clone(),
+                            },
                             device_id: None,
                             kind: message.kind.clone(),
                             text: message.text.clone(),
@@ -273,7 +320,10 @@ impl Core {
             WireEnvelope::Attachment(chunk) => {
                 let mut assembler = self.attachments.lock().await;
                 if let Some(data) = assembler.ingest(chunk.clone()) {
-                    self.attachment_store.lock().await.insert(chunk.attachment_id, data);
+                    self.attachment_store
+                        .lock()
+                        .await
+                        .insert(chunk.attachment_id, data);
                 }
             }
         }
@@ -293,23 +343,38 @@ impl Core {
     }
 
     pub async fn create_group(&self, name: String) -> Result<ConversationId, CoreError> {
-        let owner = UserIdHex { value: self.identity.user_id.to_hex() };
+        let owner = UserIdHex {
+            value: self.identity.user_id.to_hex(),
+        };
         let group = self.groups.create(name, owner).await?;
         Ok(ConversationId::new(group.id.value))
     }
 
     pub async fn create_channel(&self, name: String) -> Result<ConversationId, CoreError> {
-        let admin = UserIdHex { value: self.identity.user_id.to_hex() };
+        let admin = UserIdHex {
+            value: self.identity.user_id.to_hex(),
+        };
         let channel = self.channels.create(name, admin).await?;
         Ok(ConversationId::new(channel.id.value))
     }
 
-    pub async fn add_channel_admin(&self, id: &ConversationId, user: UserIdHex) -> Result<(), CoreError> {
+    pub async fn add_channel_admin(
+        &self,
+        id: &ConversationId,
+        user: UserIdHex,
+    ) -> Result<(), CoreError> {
         self.channels.add_admin(id, user).await
     }
 
-    pub async fn add_group_member(&self, id: &ConversationId, member: UserIdHex) -> Result<(), CoreError> {
-        let member = enigma_api::types::GroupMember { user_id: member, role: enigma_api::types::GroupRole::Member };
+    pub async fn add_group_member(
+        &self,
+        id: &ConversationId,
+        member: UserIdHex,
+    ) -> Result<(), CoreError> {
+        let member = enigma_api::types::GroupMember {
+            user_id: member,
+            role: enigma_api::types::GroupRole::Member,
+        };
         self.groups.add_member(id, member).await
     }
 

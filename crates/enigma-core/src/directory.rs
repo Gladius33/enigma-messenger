@@ -1,10 +1,9 @@
 use crate::error::CoreError;
-use crate::ids::UserId;
 use crate::identity::LocalIdentity;
+use crate::ids::UserId;
 use enigma_node_client::RegistryClient;
 use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
 pub struct ContactDirectory {
@@ -18,18 +17,28 @@ impl ContactDirectory {
         }
     }
 
-    pub async fn add(&self, handle: String, user_id: UserId) {
-        let mut guard = self.entries.lock().await;
-        guard.insert(handle, user_id);
+    pub fn add(&self, handle: String, user_id: UserId) {
+        if let Ok(mut guard) = self.entries.lock() {
+            guard.insert(handle, user_id);
+        }
     }
 
-    pub async fn lookup(&self, handle: &str) -> Option<UserId> {
-        let guard = self.entries.lock().await;
-        guard.get(handle).cloned()
+    pub fn lookup(&self, handle: &str) -> Option<UserId> {
+        self.entries
+            .lock()
+            .ok()
+            .and_then(|guard| guard.get(handle).cloned())
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.lock().map(|guard| guard.len()).unwrap_or(0)
     }
 }
 
-pub async fn register_identity(client: Arc<dyn RegistryClient>, identity: &LocalIdentity) -> Result<(), CoreError> {
+pub async fn register_identity(
+    client: Arc<dyn RegistryClient>,
+    identity: &LocalIdentity,
+) -> Result<(), CoreError> {
     client
         .register(identity.public_identity.clone())
         .await

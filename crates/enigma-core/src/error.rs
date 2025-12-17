@@ -2,7 +2,7 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum CoreError {
-    #[error("storage")] 
+    #[error("storage")]
     Storage,
     #[error("validation {0}")]
     Validation(String),
