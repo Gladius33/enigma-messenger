@@ -1,10 +1,11 @@
 use enigma_core::config::CoreConfig;
+use enigma_core::directory::InMemoryRegistry;
 use enigma_core::messaging::MockTransport;
 use enigma_core::policy::Policy;
+use enigma_core::relay::InMemoryRelay;
 use enigma_core::Core;
-use enigma_node_client::InMemoryRegistry;
-use enigma_relay::InMemoryRelay;
-use enigma_storage::KeyProvider;
+use enigma_storage::key_provider::{KeyProvider, MasterKey};
+use enigma_storage::EnigmaStorageError;
 use serde::Deserialize;
 use std::fs;
 use std::sync::Arc;
@@ -18,8 +19,12 @@ struct DaemonConfigWrapper {
 struct DaemonKey;
 
 impl KeyProvider for DaemonKey {
-    fn key(&self) -> Vec<u8> {
-        b"daemon-key".to_vec()
+    fn get_or_create_master_key(&self) -> Result<MasterKey, EnigmaStorageError> {
+        Ok(MasterKey::new([2u8; 32]))
+    }
+
+    fn get_master_key(&self) -> Result<MasterKey, EnigmaStorageError> {
+        Ok(MasterKey::new([2u8; 32]))
     }
 }
 

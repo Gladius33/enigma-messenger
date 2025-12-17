@@ -1,15 +1,15 @@
 use super::{base_config, key_provider, temp_path};
 use crate::config::TransportMode;
+use crate::directory::InMemoryRegistry;
 use crate::messaging::MockTransport;
 use crate::packet::deserialize_envelope;
 use crate::policy::Policy;
+use crate::relay::InMemoryRelay;
 use crate::Core;
 use enigma_api::types::{
     AttachmentDescriptor, AttachmentId, ConversationId, MessageId, MessageKind,
     OutgoingMessageRequest, UserIdHex,
 };
-use enigma_node_client::InMemoryRegistry;
-use enigma_relay::InMemoryRelay;
 use serde_json::json;
 use std::sync::Arc;
 

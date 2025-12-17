@@ -19,6 +19,8 @@ impl RatchetState {
         hasher.update(&self.seed);
         hasher.update(&self.counter.to_be_bytes());
         let hash = hasher.finalize();
-        AeadKey::new(hash.as_bytes().to_vec()).map_err(|_| CoreError::Crypto)
+        let mut key_bytes = [0u8; 32];
+        key_bytes.copy_from_slice(hash.as_bytes());
+        Ok(AeadKey::new(key_bytes))
     }
 }

@@ -44,8 +44,8 @@ impl crate::Core {
 
     pub async fn store_health(&self) -> StoreHealth {
         let guard = self.store.lock().await;
-        let namespace = guard.namespace().to_string();
-        let ok = guard.get("identity").is_some();
+        let namespace = self.config.namespace.clone();
+        let ok = guard.get("identity").ok().flatten().is_some();
         StoreHealth { namespace, ok }
     }
 

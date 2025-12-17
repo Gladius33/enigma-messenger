@@ -2,20 +2,25 @@ use enigma_api::types::{
     ConversationId, MessageId, MessageKind, OutgoingMessageRequest, UserIdHex,
 };
 use enigma_core::config::{CoreConfig, TransportMode};
+use enigma_core::directory::InMemoryRegistry;
 use enigma_core::messaging::MockTransport;
 use enigma_core::policy::Policy;
+use enigma_core::relay::InMemoryRelay;
 use enigma_core::{ids::UserId, Core};
-use enigma_node_client::InMemoryRegistry;
-use enigma_relay::InMemoryRelay;
-use enigma_storage::KeyProvider;
+use enigma_storage::key_provider::{KeyProvider, MasterKey};
+use enigma_storage::EnigmaStorageError;
 use std::sync::Arc;
 
 #[derive(Clone)]
 struct CliKey;
 
 impl KeyProvider for CliKey {
-    fn key(&self) -> Vec<u8> {
-        b"cli-key".to_vec()
+    fn get_or_create_master_key(&self) -> Result<MasterKey, EnigmaStorageError> {
+        Ok(MasterKey::new([1u8; 32]))
+    }
+
+    fn get_master_key(&self) -> Result<MasterKey, EnigmaStorageError> {
+        Ok(MasterKey::new([1u8; 32]))
     }
 }
 

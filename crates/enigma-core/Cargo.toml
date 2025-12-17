@@ -12,7 +12,6 @@ documentation = "https://docs.rs/enigma-core"
 [features]
 default = []
 dev = []
-sfu = ["enigma-sfu"]
 metrics = []
 
 [dependencies]
@@ -24,13 +23,8 @@ thiserror = { workspace = true }
 blake3 = { workspace = true }
 async-trait = { workspace = true }
 hex = { workspace = true }
-enigma-api = { path = "../enigma-api" }
-enigma-node-types = { path = "../../vendor/enigma-node-types" }
-enigma-node-client = { path = "../../vendor/enigma-node-client" }
-enigma-packet = { path = "../../vendor/enigma-packet" }
-enigma-aead = { path = "../../vendor/enigma-aead" }
-enigma-storage = { path = "../../vendor/enigma-storage" }
-enigma-relay = { path = "../../vendor/enigma-relay" }
-enigma-signaling = { path = "../../vendor/enigma-signaling" }
-enigma-transport-webrtc = { path = "../../vendor/enigma-transport-webrtc" }
-enigma-sfu = { path = "../../vendor/enigma-sfu", optional = true }
+base64 = "0.21"
+enigma-api = { path = "../enigma-api", version = "0.0.1" }
+enigma-node-types = { version = "0.0.1" }
+enigma-aead = { version = "0.1.1" }
+enigma-storage = { version = "0.0.1" }

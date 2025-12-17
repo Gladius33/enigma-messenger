@@ -13,7 +13,5 @@ enigma-core = { path = "../../crates/enigma-core" }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tokio = { workspace = true }
-enigma-node-client = { path = "../../vendor/enigma-node-client" }
-enigma-relay = { path = "../../vendor/enigma-relay" }
-enigma-storage = { path = "../../vendor/enigma-storage" }
+enigma-storage = { version = "0.0.1" }
 enigma-api = { path = "../../crates/enigma-api" }

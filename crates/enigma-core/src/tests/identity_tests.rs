@@ -1,16 +1,17 @@
 use super::{base_config, key_provider, temp_path};
 use crate::config::TransportMode;
+use crate::directory::InMemoryRegistry;
 use crate::messaging::MockTransport;
 use crate::policy::Policy;
+use crate::relay::InMemoryRelay;
 use crate::Core;
-use enigma_node_client::InMemoryRegistry;
-use enigma_relay::InMemoryRelay;
 use std::sync::Arc;
 
 #[tokio::test]
 async fn identity_persists_across_reload() {
     let path = temp_path("identity");
-    let config = base_config(path.clone(), TransportMode::Hybrid);
+    let mut config = base_config(path.clone(), TransportMode::Hybrid);
+    config.polling_interval_ms = 0;
     let registry = Arc::new(InMemoryRegistry::new());
     let relay = Arc::new(InMemoryRelay::new());
     let transport = MockTransport::new();
@@ -25,6 +26,7 @@ async fn identity_persists_across_reload() {
     .await
     .expect("init one");
     let identity_one = core_one.local_identity();
+    drop(core_one);
     let core_two = Core::init(
         config,
         Policy::default(),

@@ -8,7 +8,8 @@ pub mod negative_tests;
 pub mod offline_relay_tests;
 
 use crate::config::{CoreConfig, TransportMode};
-use enigma_storage::KeyProvider;
+use enigma_storage::key_provider::{KeyProvider, MasterKey};
+use enigma_storage::EnigmaStorageError;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -16,8 +17,12 @@ use uuid::Uuid;
 pub struct TestKeyProvider;
 
 impl KeyProvider for TestKeyProvider {
-    fn key(&self) -> Vec<u8> {
-        b"test-key-material".to_vec()
+    fn get_or_create_master_key(&self) -> Result<MasterKey, EnigmaStorageError> {
+        Ok(MasterKey::new([7u8; 32]))
+    }
+
+    fn get_master_key(&self) -> Result<MasterKey, EnigmaStorageError> {
+        Ok(MasterKey::new([7u8; 32]))
     }
 }
 

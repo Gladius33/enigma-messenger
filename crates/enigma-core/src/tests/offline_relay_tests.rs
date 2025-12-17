@@ -1,13 +1,13 @@
 use super::{base_config, key_provider, temp_path};
 use crate::config::TransportMode;
+use crate::directory::InMemoryRegistry;
 use crate::messaging::MockTransport;
 use crate::policy::Policy;
+use crate::relay::{InMemoryRelay, RelayClient};
 use crate::Core;
 use enigma_api::types::{
     ConversationId, MessageId, MessageKind, OutgoingMessageRequest, UserIdHex,
 };
-use enigma_node_client::InMemoryRegistry;
-use enigma_relay::{InMemoryRelay, RelayClient};
 use std::sync::Arc;
 
 #[tokio::test]

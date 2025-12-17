@@ -1,9 +1,15 @@
 use crate::error::CoreError;
 use enigma_node_types::RelayEnvelope;
-use enigma_relay::RelayClient;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use uuid::Uuid;
+
+#[async_trait::async_trait]
+pub trait RelayClient: Send + Sync {
+    async fn push(&self, envelope: RelayEnvelope) -> Result<(), CoreError>;
+    async fn pull(&self, recipient: &str) -> Result<Vec<RelayEnvelope>, CoreError>;
+    async fn ack(&self, recipient: &str, ids: &[Uuid]) -> Result<(), CoreError>;
+}
 
 #[derive(Clone)]
 pub struct RelayGateway {
@@ -56,5 +62,41 @@ impl RelayGateway {
 
     pub async fn pending_len(&self) -> usize {
         self.pending.lock().await.len()
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct InMemoryRelay {
+    entries: Arc<Mutex<Vec<RelayEnvelope>>>,
+}
+
+impl InMemoryRelay {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+#[async_trait::async_trait]
+impl RelayClient for InMemoryRelay {
+    async fn push(&self, envelope: RelayEnvelope) -> Result<(), CoreError> {
+        let mut guard = self.entries.lock().await;
+        guard.push(envelope);
+        Ok(())
+    }
+
+    async fn pull(&self, recipient: &str) -> Result<Vec<RelayEnvelope>, CoreError> {
+        let guard = self.entries.lock().await;
+        let list = guard
+            .iter()
+            .filter(|env| env.to.to_hex() == recipient)
+            .cloned()
+            .collect();
+        Ok(list)
+    }
+
+    async fn ack(&self, recipient: &str, ids: &[Uuid]) -> Result<(), CoreError> {
+        let mut guard = self.entries.lock().await;
+        guard.retain(|env| env.to.to_hex() != recipient || !ids.contains(&env.id));
+        Ok(())
     }
 }

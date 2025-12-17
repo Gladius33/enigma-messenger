@@ -24,17 +24,18 @@ mod introspection;
 pub use introspection::{CoreStats, RegistryStatus, StoreHealth};
 
 use attachments::{prepare_chunks, AttachmentAssembler};
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 use channels::ChannelState;
 use config::{CoreConfig, TransportMode};
-use directory::{register_identity, ContactDirectory};
+use directory::{register_identity, ContactDirectory, RegistryClient};
 use enigma_api::types::{
     ConversationId as ApiConversationId, IncomingMessageEvent, MessageId, OutgoingMessageRequest,
     ReceiptStatus, UserIdHex, ValidationLimits,
 };
-use enigma_node_client::RegistryClient;
-use enigma_node_types::{EnvelopePayload, RelayEnvelope};
-use enigma_relay::RelayClient;
-use enigma_storage::{EncryptedStore, KeyProvider};
+use enigma_node_types::{OpaqueMessage, RelayEnvelope, RelayKind, UserId as NodeUserId};
+use enigma_storage::key_provider::KeyProvider;
+use enigma_storage::EncryptedStore;
 use error::CoreError;
 use event::{EventBus, EventReceiver};
 use groups::{GroupState, NullGroupCryptoProvider};
@@ -45,7 +46,7 @@ use packet::{
     build_frame, decode_frame, deserialize_envelope, serialize_envelope, PlainMessage, WireEnvelope,
 };
 use policy::Policy;
-use relay::RelayGateway;
+use relay::{RelayClient, RelayGateway};
 use session::SessionManager;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -80,13 +81,13 @@ impl Core {
         relay_client: Arc<dyn RelayClient>,
         transport: Arc<dyn Transport>,
     ) -> Result<Self, CoreError> {
-        let mut store = EncryptedStore::open_or_create(
+        let store = EncryptedStore::open(
             &config.storage_path,
             &config.namespace,
             key_provider.as_ref(),
         )
         .map_err(|_| CoreError::Storage)?;
-        let identity = LocalIdentity::load_or_create(&mut store, config.device_name.clone())?;
+        let identity = LocalIdentity::load_or_create(&store, config.device_name.clone())?;
         let sessions = SessionManager::new(identity.user_id.clone());
         let core = Self {
             config: config.clone(),
@@ -106,11 +107,13 @@ impl Core {
         };
         {
             let guard = core.store.lock().await;
-            let _ = guard.get("identity");
+            let _ = guard.get("identity").ok();
         }
         let _ = core.directory.lookup(&identity.user_id.to_hex());
         register_identity(core.registry.clone(), &identity).await?;
-        core.start_relay_poller();
+        if core.config.polling_interval_ms > 0 {
+            core.start_relay_poller();
+        }
         Ok(core)
     }
 
@@ -216,14 +219,10 @@ impl Core {
         bytes: Vec<u8>,
         is_attachment: bool,
     ) -> Result<(), CoreError> {
-        let payload = if is_attachment {
-            EnvelopePayload::AttachmentChunk(bytes.clone())
-        } else {
-            EnvelopePayload::Message(bytes.clone())
-        };
         match self.config.transport_mode {
             TransportMode::RelayOnly => {
-                let env = RelayEnvelope::new(recipient.value.clone(), payload);
+                let env =
+                    build_relay_envelope(&self.identity.user_id, recipient, bytes, is_attachment)?;
                 self.relay.push(env).await?
             }
             TransportMode::P2PWebRTC => self.transport.send(recipient.value.clone(), bytes).await?,
@@ -233,7 +232,12 @@ impl Core {
                     .send(recipient.value.clone(), bytes.clone())
                     .await;
                 if send_result.is_err() {
-                    let env = RelayEnvelope::new(recipient.value.clone(), payload);
+                    let env = build_relay_envelope(
+                        &self.identity.user_id,
+                        recipient,
+                        bytes,
+                        is_attachment,
+                    )?;
                     self.relay.push(env).await?;
                 }
             }
@@ -262,15 +266,20 @@ impl Core {
         let pulled = self.relay.pull(&self.identity.user_id.to_hex()).await?;
         let mut ack_ids = Vec::new();
         for env in pulled.iter() {
-            match &env.payload {
-                EnvelopePayload::Message(bytes) => {
-                    self.handle_incoming_bytes(bytes.clone(), true).await?;
-                    ack_ids.push(env.id);
+            match &env.kind {
+                RelayKind::OpaqueMessage(msg) => {
+                    if let Ok(bytes) = STANDARD.decode(&msg.blob_b64) {
+                        self.handle_incoming_bytes(bytes, true).await?;
+                        ack_ids.push(env.id);
+                    }
                 }
-                EnvelopePayload::AttachmentChunk(bytes) => {
-                    self.handle_incoming_bytes(bytes.clone(), true).await?;
-                    ack_ids.push(env.id);
+                RelayKind::OpaqueAttachmentChunk(chunk) => {
+                    if let Ok(bytes) = STANDARD.decode(&chunk.blob_b64) {
+                        self.handle_incoming_bytes(bytes, true).await?;
+                        ack_ids.push(env.id);
+                    }
                 }
+                RelayKind::OpaqueSignaling(_) => {}
             }
         }
         if !ack_ids.is_empty() {
@@ -395,6 +404,30 @@ fn parse_sender(bytes: &[u8]) -> Option<String> {
     String::from_utf8(bytes.to_vec())
         .ok()
         .and_then(|value| value.split(':').last().map(|s| s.to_string()))
+}
+
+fn build_relay_envelope(
+    sender: &UserId,
+    recipient: &UserIdHex,
+    bytes: Vec<u8>,
+    _is_attachment: bool,
+) -> Result<RelayEnvelope, CoreError> {
+    let to = NodeUserId::from_hex(&recipient.value)
+        .map_err(|_| CoreError::Transport("relay_to".to_string()))?;
+    let from = NodeUserId::from_hex(&sender.to_hex()).ok();
+    let blob_b64 = STANDARD.encode(&bytes);
+    let kind = RelayKind::OpaqueMessage(OpaqueMessage {
+        blob_b64,
+        content_type: None,
+    });
+    Ok(RelayEnvelope {
+        id: Uuid::new_v4(),
+        to,
+        from,
+        created_at_ms: now_ms(),
+        expires_at_ms: None,
+        kind,
+    })
 }
 
 #[cfg(test)]
