@@ -11,6 +11,10 @@ pub struct Policy {
     pub max_group_name_len: usize,
     pub max_channel_name_len: usize,
     pub max_membership_changes_per_minute: u32,
+    pub max_retry_window_secs: u64,
+    pub backoff_initial_ms: u64,
+    pub backoff_max_ms: u64,
+    pub outbox_batch_send: usize,
 }
 
 impl Default for Policy {
@@ -24,6 +28,10 @@ impl Default for Policy {
             max_group_name_len: 64,
             max_channel_name_len: 64,
             max_membership_changes_per_minute: 120,
+            max_retry_window_secs: 3600,
+            backoff_initial_ms: 500,
+            backoff_max_ms: 60000,
+            outbox_batch_send: 32,
         }
     }
 }

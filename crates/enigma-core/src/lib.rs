@@ -9,6 +9,7 @@ pub mod groups;
 pub mod identity;
 pub mod ids;
 pub mod messaging;
+pub mod outbox;
 pub mod packet;
 pub mod policy;
 pub mod ratchet;
@@ -42,6 +43,7 @@ use groups::{GroupState, NullGroupCryptoProvider};
 use identity::LocalIdentity;
 use ids::{conversation_id_for_dm, ConversationId, UserId};
 use messaging::{MockTransport, Transport};
+use outbox::{Outbox, OutboxItem};
 use packet::{
     build_frame, decode_frame, deserialize_envelope, serialize_envelope, PlainMessage, WireEnvelope,
 };
@@ -50,6 +52,9 @@ use relay::{RelayClient, RelayGateway};
 use session::SessionManager;
 use std::collections::HashMap;
 use std::sync::Arc;
+#[cfg(test)]
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 use time::now_ms;
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -70,6 +75,9 @@ pub struct Core {
     events: EventBus,
     groups: GroupState,
     channels: ChannelState,
+    outbox: Outbox,
+    #[cfg(test)]
+    persist_fail: Arc<AtomicBool>,
 }
 
 impl Core {
@@ -89,10 +97,11 @@ impl Core {
         .map_err(|_| CoreError::Storage)?;
         let identity = LocalIdentity::load_or_create(&store, config.device_name.clone())?;
         let sessions = SessionManager::new(identity.user_id.clone());
+        let store_arc = Arc::new(Mutex::new(store));
         let core = Self {
             config: config.clone(),
             policy: policy.clone(),
-            store: Arc::new(Mutex::new(store)),
+            store: store_arc.clone(),
             identity: identity.clone(),
             sessions: Arc::new(Mutex::new(sessions)),
             attachments: Arc::new(Mutex::new(AttachmentAssembler::new())),
@@ -104,6 +113,9 @@ impl Core {
             events: EventBus::new(256),
             groups: GroupState::new(policy.clone(), Arc::new(NullGroupCryptoProvider)),
             channels: ChannelState::new(policy.clone()),
+            outbox: Outbox::new(store_arc),
+            #[cfg(test)]
+            persist_fail: Arc::new(AtomicBool::new(false)),
         };
         {
             let guard = core.store.lock().await;
@@ -113,6 +125,9 @@ impl Core {
         register_identity(core.registry.clone(), &identity).await?;
         if core.config.polling_interval_ms > 0 {
             core.start_relay_poller();
+        }
+        if core.policy.outbox_batch_send > 0 {
+            core.start_outbox_worker();
         }
         Ok(core)
     }
@@ -198,14 +213,50 @@ impl Core {
             let frame = build_frame(plain, &key)?;
             let envelope = WireEnvelope::Message(frame);
             let bytes = serialize_envelope(&envelope)?;
-            self.route_bytes(recipient, bytes.clone(), false).await?;
+            let outbox_id = Uuid::new_v4();
+            let item = OutboxItem {
+                id: outbox_id,
+                message_id: request.client_message_id.value.to_string(),
+                created_at_ms: now_ms(),
+                next_retry_ms: now_ms(),
+                tries: 0,
+                recipient_user_id: recipient.value.clone(),
+                conversation_id: request.conversation_id.value.clone(),
+                packet: bytes.clone(),
+            };
+            let _ = self.outbox.put(item).await;
+            let sent = self.send_outbox_item_bytes(&recipient.value, &bytes).await;
+            if sent.is_ok() {
+                let _ = self.outbox.mark_sent(&outbox_id).await;
+            } else {
+                let _ = self.outbox.bump_retry(&outbox_id, &self.policy).await;
+            }
             if let Some(descriptor) = request.attachment.as_ref() {
                 if let Some(data) = request.attachment_bytes.as_ref() {
                     let chunks = prepare_chunks(descriptor, data, &self.policy)?;
                     for chunk in chunks {
                         let chunk_env = WireEnvelope::Attachment(chunk);
                         let payload = serialize_envelope(&chunk_env)?;
-                        self.route_bytes(recipient, payload, true).await?;
+                        let att_id = Uuid::new_v4();
+                        let att_item = OutboxItem {
+                            id: att_id,
+                            message_id: request.client_message_id.value.to_string(),
+                            created_at_ms: now_ms(),
+                            next_retry_ms: now_ms(),
+                            tries: 0,
+                            recipient_user_id: recipient.value.clone(),
+                            conversation_id: request.conversation_id.value.clone(),
+                            packet: payload.clone(),
+                        };
+                        let _ = self.outbox.put(att_item).await;
+                        let att_sent = self
+                            .send_outbox_item_bytes(&recipient.value, &payload)
+                            .await;
+                        if att_sent.is_ok() {
+                            let _ = self.outbox.mark_sent(&att_id).await;
+                        } else {
+                            let _ = self.outbox.bump_retry(&att_id, &self.policy).await;
+                        }
                     }
                 }
             }
@@ -213,36 +264,36 @@ impl Core {
         Ok(request.client_message_id.clone())
     }
 
-    async fn route_bytes(
-        &self,
-        recipient: &UserIdHex,
-        bytes: Vec<u8>,
-        is_attachment: bool,
-    ) -> Result<(), CoreError> {
+    async fn send_outbox_item_bytes(&self, recipient: &str, bytes: &[u8]) -> Result<(), CoreError> {
+        let is_attachment = deserialize_envelope(bytes)
+            .map(|env| matches!(env, WireEnvelope::Attachment(_)))
+            .unwrap_or(false);
         match self.config.transport_mode {
             TransportMode::RelayOnly => {
-                let env =
-                    build_relay_envelope(&self.identity.user_id, recipient, bytes, is_attachment)?;
-                self.relay.push(env).await?
+                let env = build_relay_envelope(
+                    &self.identity.user_id,
+                    recipient,
+                    bytes.to_vec(),
+                    is_attachment,
+                )?;
+                self.relay.push(env).await
             }
-            TransportMode::P2PWebRTC => self.transport.send(recipient.value.clone(), bytes).await?,
+            TransportMode::P2PWebRTC => self.transport.send_p2p(recipient, bytes).await,
             TransportMode::Hybrid => {
-                let send_result = self
-                    .transport
-                    .send(recipient.value.clone(), bytes.clone())
-                    .await;
-                if send_result.is_err() {
-                    let env = build_relay_envelope(
-                        &self.identity.user_id,
-                        recipient,
-                        bytes,
-                        is_attachment,
-                    )?;
-                    self.relay.push(env).await?;
+                if self.transport.p2p_ready(recipient).await {
+                    if self.transport.send_p2p(recipient, bytes).await.is_ok() {
+                        return Ok(());
+                    }
                 }
+                let env = build_relay_envelope(
+                    &self.identity.user_id,
+                    recipient,
+                    bytes.to_vec(),
+                    is_attachment,
+                )?;
+                self.relay.push(env).await
             }
         }
-        Ok(())
     }
 
     pub async fn poll_once(&self) -> Result<(), CoreError> {
@@ -269,14 +320,20 @@ impl Core {
             match &env.kind {
                 RelayKind::OpaqueMessage(msg) => {
                     if let Ok(bytes) = STANDARD.decode(&msg.blob_b64) {
-                        self.handle_incoming_bytes(bytes, true).await?;
-                        ack_ids.push(env.id);
+                        if self.persist_incoming(env.id, &bytes).await.is_ok() {
+                            if self.handle_incoming_bytes(bytes, true).await.is_ok() {
+                                ack_ids.push(env.id);
+                            }
+                        }
                     }
                 }
                 RelayKind::OpaqueAttachmentChunk(chunk) => {
                     if let Ok(bytes) = STANDARD.decode(&chunk.blob_b64) {
-                        self.handle_incoming_bytes(bytes, true).await?;
-                        ack_ids.push(env.id);
+                        if self.persist_incoming(env.id, &bytes).await.is_ok() {
+                            if self.handle_incoming_bytes(bytes, true).await.is_ok() {
+                                ack_ids.push(env.id);
+                            }
+                        }
                     }
                 }
                 RelayKind::OpaqueSignaling(_) => {}
@@ -339,6 +396,16 @@ impl Core {
         Ok(())
     }
 
+    async fn persist_incoming(&self, id: Uuid, bytes: &[u8]) -> Result<(), CoreError> {
+        #[cfg(test)]
+        if self.persist_fail.load(Ordering::SeqCst) {
+            return Err(CoreError::Storage);
+        }
+        let guard = self.store.lock().await;
+        let key = format!("inbox:{}", id);
+        guard.put(&key, bytes).map_err(|_| CoreError::Storage)
+    }
+
     fn start_relay_poller(&self) {
         let cloned = self.clone();
         let interval_ms = self.config.polling_interval_ms;
@@ -349,6 +416,40 @@ impl Core {
                 let _ = cloned.poll_once().await;
             }
         });
+    }
+
+    fn start_outbox_worker(&self) {
+        let cloned = self.clone();
+        let batch = self.policy.outbox_batch_send;
+        let window_ms = self.policy.max_retry_window_secs.saturating_mul(1000);
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_millis(250));
+            loop {
+                ticker.tick().await;
+                let now = now_ms();
+                if let Ok(items) = cloned.outbox.load_all_due(now, batch).await {
+                    for item in items {
+                        if now.saturating_sub(item.created_at_ms) > window_ms {
+                            let _ = cloned.outbox.mark_sent(&item.id).await;
+                            continue;
+                        }
+                        match cloned.send_outbox_item(&item).await {
+                            Ok(_) => {
+                                let _ = cloned.outbox.mark_sent(&item.id).await;
+                            }
+                            Err(_) => {
+                                let _ = cloned.outbox.bump_retry(&item.id, &cloned.policy).await;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    async fn send_outbox_item(&self, item: &OutboxItem) -> Result<(), CoreError> {
+        self.send_outbox_item_bytes(&item.recipient_user_id, &item.packet)
+            .await
     }
 
     pub async fn create_group(&self, name: String) -> Result<ConversationId, CoreError> {
@@ -408,11 +509,11 @@ fn parse_sender(bytes: &[u8]) -> Option<String> {
 
 fn build_relay_envelope(
     sender: &UserId,
-    recipient: &UserIdHex,
+    recipient: &str,
     bytes: Vec<u8>,
     _is_attachment: bool,
 ) -> Result<RelayEnvelope, CoreError> {
-    let to = NodeUserId::from_hex(&recipient.value)
+    let to = NodeUserId::from_hex(recipient)
         .map_err(|_| CoreError::Transport("relay_to".to_string()))?;
     let from = NodeUserId::from_hex(&sender.to_hex()).ok();
     let blob_b64 = STANDARD.encode(&bytes);

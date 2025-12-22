@@ -1,11 +1,14 @@
 pub mod attachments_tests;
 pub mod groups_channels_tests;
+pub mod hybrid_fallback_tests;
 pub mod identity_tests;
 #[cfg(feature = "dev")]
 pub mod introspection_tests;
 pub mod messaging_tests;
 pub mod negative_tests;
 pub mod offline_relay_tests;
+pub mod outbox_retry_tests;
+pub mod relay_ack_persistence_tests;
 
 use crate::config::{CoreConfig, TransportMode};
 use enigma_storage::key_provider::{KeyProvider, MasterKey};
