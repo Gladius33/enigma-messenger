@@ -18,6 +18,8 @@ pub struct PlainMessage {
     pub timestamp: u64,
     pub edited: bool,
     pub deleted: bool,
+    #[serde(default)]
+    pub distribution_payload: Option<Vec<u8>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -39,6 +41,14 @@ pub struct MessageFrame {
     pub device_id: Option<Uuid>,
     #[serde(default)]
     pub target_device_id: Option<Uuid>,
+    #[serde(default)]
+    pub sender: Option<String>,
+    #[serde(default)]
+    pub group_sender_key_id: Option<u32>,
+    #[serde(default)]
+    pub group_epoch: Option<u32>,
+    #[serde(default)]
+    pub group_msg_index: Option<u32>,
 }
 
 pub fn build_frame(
@@ -64,6 +74,10 @@ pub fn build_frame(
         associated_data: associated.as_bytes().to_vec(),
         device_id: Some(device_id.as_uuid()),
         target_device_id: Some(target_device_id.as_uuid()),
+        sender: Some(message.sender),
+        group_sender_key_id: None,
+        group_epoch: None,
+        group_msg_index: None,
     })
 }
 
@@ -83,7 +97,7 @@ pub fn deserialize_envelope(bytes: &[u8]) -> Result<WireEnvelope, CoreError> {
     serde_json::from_slice(bytes).map_err(|_| CoreError::Crypto)
 }
 
-fn format_kind(kind: &MessageKind) -> String {
+pub fn format_kind(kind: &MessageKind) -> String {
     match kind {
         MessageKind::Text => "Text",
         MessageKind::File => "File",

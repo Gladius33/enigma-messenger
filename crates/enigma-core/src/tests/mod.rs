@@ -11,6 +11,8 @@ pub mod negative_tests;
 pub mod offline_relay_tests;
 pub mod outbox_retry_tests;
 pub mod relay_ack_persistence_tests;
+#[cfg(feature = "sender-keys")]
+pub mod sender_keys_tests;
 
 use crate::config::{CoreConfig, TransportMode};
 use enigma_api::types::OutgoingRecipient;

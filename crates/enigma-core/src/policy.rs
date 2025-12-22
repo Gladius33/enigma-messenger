@@ -2,6 +2,13 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+pub enum GroupCryptoMode {
+    Fanout,
+    SenderKeys,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub enum ReceiptAggregation {
     Any,
     All,
@@ -25,6 +32,9 @@ pub struct Policy {
     pub directory_ttl_secs: u64,
     pub directory_refresh_on_send: bool,
     pub receipt_aggregation: ReceiptAggregation,
+    pub group_crypto_mode: GroupCryptoMode,
+    pub sender_keys_rotate_every_msgs: u32,
+    pub sender_keys_rotate_on_membership_change: bool,
 }
 
 impl Default for Policy {
@@ -45,6 +55,9 @@ impl Default for Policy {
             directory_ttl_secs: 3600,
             directory_refresh_on_send: true,
             receipt_aggregation: ReceiptAggregation::Any,
+            group_crypto_mode: GroupCryptoMode::Fanout,
+            sender_keys_rotate_every_msgs: 1000,
+            sender_keys_rotate_on_membership_change: true,
         }
     }
 }

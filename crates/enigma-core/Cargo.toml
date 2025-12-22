@@ -12,6 +12,7 @@ documentation = "https://docs.rs/enigma-core"
 [features]
 default = []
 dev = []
+sender-keys = []
 metrics = []
 
 [dependencies]
