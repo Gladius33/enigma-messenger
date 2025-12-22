@@ -26,6 +26,8 @@ pub struct SenderKeyState {
     pub chain_key: [u8; 32],
     pub msg_index: u32,
     pub created_at_ms: u64,
+    #[serde(default = "zero_fingerprint")]
+    pub members_fingerprint: [u8; 32],
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -40,6 +42,26 @@ fn random_chain_key() -> [u8; 32] {
     let mut bytes = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut bytes);
     bytes
+}
+
+fn zero_fingerprint() -> [u8; 32] {
+    [0u8; 32]
+}
+
+pub fn membership_fingerprint(member_user_ids: &[String]) -> [u8; 32] {
+    let mut ids = member_user_ids.to_vec();
+    ids.sort();
+    let mut hasher = Hasher::new();
+    for (idx, id) in ids.iter().enumerate() {
+        if idx > 0 {
+            hasher.update(&[0]);
+        }
+        hasher.update(id.as_bytes());
+    }
+    let digest = hasher.finalize();
+    let mut out = [0u8; 32];
+    out.copy_from_slice(digest.as_bytes());
+    out
 }
 
 fn state_key(group_id: &str, sender: &str) -> String {
@@ -68,6 +90,7 @@ pub async fn load_or_create_sender_state(
     group_id: &str,
     sender_user_id: &str,
     now: u64,
+    members_fingerprint: [u8; 32],
 ) -> Result<SenderKeyState, CoreError> {
     if let Some(state) = load_state(store.clone(), group_id, sender_user_id).await? {
         return Ok(state);
@@ -80,6 +103,7 @@ pub async fn load_or_create_sender_state(
         chain_key: random_chain_key(),
         msg_index: 0,
         created_at_ms: now,
+        members_fingerprint,
     };
     save_state(store, &state).await?;
     Ok(state)
@@ -89,6 +113,7 @@ pub async fn rotate_sender_state(
     store: Arc<Mutex<EncryptedStore>>,
     state: &SenderKeyState,
     now: u64,
+    members_fingerprint: [u8; 32],
 ) -> Result<SenderKeyState, CoreError> {
     let rotated = SenderKeyState {
         group_id: state.group_id.clone(),
@@ -98,6 +123,7 @@ pub async fn rotate_sender_state(
         chain_key: random_chain_key(),
         msg_index: 0,
         created_at_ms: now,
+        members_fingerprint,
     };
     save_state(store, &rotated).await?;
     Ok(rotated)

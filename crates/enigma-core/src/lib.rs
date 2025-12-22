@@ -72,8 +72,9 @@ use packet::format_kind;
 #[cfg(feature = "sender-keys")]
 use group_crypto::{
     build_distribution_payload, decrypt_group_message, distribution_sent, encrypt_group_message,
-    load_or_create_sender_state, load_state, parse_distribution_payload, rotate_sender_state,
-    save_state, store_distribution_marker, store_pending_message, take_pending_messages,
+    load_or_create_sender_state, load_state, membership_fingerprint, parse_distribution_payload,
+    rotate_sender_state, save_state, store_distribution_marker, store_pending_message,
+    take_pending_messages,
 };
 
 #[cfg(feature = "sender-keys")]
@@ -320,21 +321,30 @@ impl Core {
         }
         let sender_hex = request.sender.value.clone();
         let now = now_ms();
+        let member_ids: Vec<String> = group
+            .members
+            .iter()
+            .filter(|m| m.user_id.value != sender_hex)
+            .map(|m| m.user_id.value.clone())
+            .collect();
+        let fingerprint = membership_fingerprint(&member_ids);
         let mut state = load_or_create_sender_state(
             self.store.clone(),
             &group.id.value,
             &sender_hex,
             now,
+            fingerprint,
         )
         .await?;
-        if let Some(updated) = self.groups.updated_at_ms(&ConversationId::new(group.id.value.clone())).await {
-            if self.policy.sender_keys_rotate_on_membership_change && updated > state.created_at_ms
-            {
-                state = rotate_sender_state(self.store.clone(), &state, now).await?;
-            }
+        if self.policy.sender_keys_rotate_on_membership_change
+            && state.members_fingerprint != fingerprint
+        {
+            state = rotate_sender_state(self.store.clone(), &state, now, fingerprint).await?;
         }
         if state.msg_index >= self.policy.sender_keys_rotate_every_msgs {
-            state = rotate_sender_state(self.store.clone(), &state, now).await?;
+            state =
+                rotate_sender_state(self.store.clone(), &state, now, state.members_fingerprint)
+                    .await?;
         }
         let dist_payload = build_distribution_payload(&state);
         let mut targets = Vec::new();

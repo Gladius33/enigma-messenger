@@ -252,17 +252,17 @@ async fn rotate_on_membership_change() {
         .iter()
         .filter_map(|item| {
             deserialize_envelope(&item.packet).ok().and_then(|env| {
-                    if let WireEnvelope::Message(frame) = env {
-                        if frame.conversation_id == group_id.value {
-                            return frame.group_sender_key_id;
-                        }
+                if let WireEnvelope::Message(frame) = env {
+                    if frame.conversation_id == group_id.value {
+                        return frame.group_sender_key_id;
                     }
-                    None
-                })
+                }
+                None
+            })
         })
-        .next()
+        .max()
         .expect("sender key id 2");
-    assert_ne!(first_key, second_key);
+    assert!(second_key > first_key);
 }
 
 #[tokio::test]
