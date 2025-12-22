@@ -11,6 +11,7 @@ homepage = "https://github.com/gladius33/enigma-messenger"
 [features]
 default = []
 webrtc = ["enigma-transport-webrtc"]
+webrtc-media = ["enigma-transport-webrtc"]
 
 [dependencies]
 enigma-core = { path = "../../crates/enigma-core", features = ["dev"] }

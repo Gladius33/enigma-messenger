@@ -1,7 +1,11 @@
+mod calls;
 mod config;
+mod sfu_adapter;
 
 use bytes::Bytes;
+use calls::{CallManager, CallManagerError, CallRole, CallRoomState, IceDirection, SignalingRecord};
 use config::EnigmaConfig;
+use sfu_adapter::DaemonSfuAdapter;
 use enigma_core::config::{CoreConfig, TransportMode};
 use enigma_core::directory::InMemoryRegistry;
 use enigma_core::messaging::MockTransport;
@@ -48,6 +52,16 @@ impl KeyProvider for DaemonKey {
 struct DaemonState {
     core: Arc<Core>,
     sfu: Option<Arc<Sfu>>,
+    sfu_adapter: Option<Arc<DaemonSfuAdapter>>,
+    call_manager: CallManager,
+    calls_enabled: bool,
+    calls_policy: CallsPolicy,
+}
+
+#[derive(Clone)]
+struct CallsPolicy {
+    max_publish_tracks_per_participant: u32,
+    max_subscriptions_per_participant: u32,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -72,8 +86,21 @@ async fn main() -> Result<(), DaemonError> {
     let cfg = config::load_config(&path).map_err(|_| DaemonError::Config)?;
     init_logging(&cfg);
     let core = init_core(&cfg).await?;
-    let sfu = init_sfu(&cfg);
-    let state = DaemonState { core, sfu };
+    let (sfu, sfu_adapter) = init_sfu(&cfg);
+    let calls_enabled = cfg.calls.enabled;
+    let call_manager = CallManager::new();
+    let calls_policy = CallsPolicy {
+        max_publish_tracks_per_participant: cfg.calls.max_publish_tracks_per_participant,
+        max_subscriptions_per_participant: cfg.calls.max_subscriptions_per_participant,
+    };
+    let state = DaemonState {
+        core,
+        sfu,
+        sfu_adapter,
+        call_manager,
+        calls_enabled,
+        calls_policy,
+    };
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let (_addr, server) = start_control_server(state, shutdown_rx).await?;
     let ctrl_c = signal::ctrl_c();
@@ -154,12 +181,24 @@ async fn init_core(cfg: &EnigmaConfig) -> Result<Arc<Core>, DaemonError> {
     .map_err(|_| DaemonError::Core)
 }
 
-fn init_sfu(cfg: &EnigmaConfig) -> Option<Arc<Sfu>> {
+fn init_sfu(cfg: &EnigmaConfig) -> (Option<Arc<Sfu>>, Option<Arc<DaemonSfuAdapter>>) {
     if cfg.sfu.enabled {
-        Some(Arc::new(Sfu::new(VecEventSink::new())))
-    } else {
-        None
+        #[cfg(feature = "webrtc-media")]
+        {
+            let adapter = Arc::new(DaemonSfuAdapter::new());
+            let sfu = Arc::new(Sfu::with_adapter(
+                Arc::new(VecEventSink::new()),
+                adapter.clone(),
+            ));
+            return (Some(sfu), Some(adapter));
+        }
+        #[cfg(not(feature = "webrtc-media"))]
+        {
+            let sfu = Arc::new(Sfu::new(VecEventSink::new()));
+            return (Some(sfu), None);
+        }
     }
+    (None, None)
 }
 
 async fn start_control_server(state: DaemonState, shutdown: oneshot::Receiver<()>) -> Result<(Option<SocketAddr>, JoinHandle<()>), DaemonError> {
@@ -222,15 +261,235 @@ async fn handle_request(state: DaemonState, req: Request<Incoming>) -> Result<Re
         });
         return Ok(Response::new(Full::from(body.to_string())));
     }
+    if req.uri().path().starts_with("/calls/") {
+        return handle_calls_request(state.clone(), req).await;
+    }
     if req.uri().path().starts_with("/sfu/") {
-        if let Some(sfu) = state.sfu {
-            return handle_sfu_request(sfu, req).await;
+        if let Some(sfu) = state.sfu.clone() {
+            return handle_sfu_request(state, sfu, req).await;
         }
     }
     Ok(not_found_response())
 }
 
-async fn handle_sfu_request(sfu: Arc<Sfu>, req: Request<Incoming>) -> Result<Response<Full<Bytes>>, hyper::Error> {
+async fn handle_calls_request(
+    state: DaemonState,
+    req: Request<Incoming>,
+) -> Result<Response<Full<Bytes>>, hyper::Error> {
+    if !state.calls_enabled {
+        return Ok(calls_disabled_response());
+    }
+    let sfu = match state.sfu.clone() {
+        Some(s) => s,
+        None => return Ok(calls_disabled_response()),
+    };
+    let path = req.uri().path().trim_start_matches('/');
+    let segments: Vec<&str> = path.split('/').collect();
+    if segments.get(0) != Some(&"calls") || segments.len() < 3 {
+        return Ok(not_found_response());
+    }
+    let room_id = match parse_room_id(segments[1]) {
+        Ok(id) => id,
+        Err(resp) => return Ok(resp),
+    };
+    let action = segments[2];
+    match action {
+        "join" => {
+            if req.method().as_str() != "POST" {
+                return Ok(method_not_allowed_response());
+            }
+            let parsed = parse_body::<CallJoinPayload>(req.into_body()).await?;
+            let payload = match parsed {
+                Ok(p) => p,
+                Err(resp) => return Ok(resp),
+            };
+            let participant_id = match parse_participant_id(&payload.participant_id) {
+                Ok(id) => id,
+                Err(resp) => return Ok(resp),
+            };
+            let role = payload.role.unwrap_or_default();
+            let res = state.call_manager.join_room(
+                &sfu,
+                room_id.clone(),
+                participant_id.clone(),
+                payload.display_name,
+                role.clone(),
+                now_ms(),
+            );
+            return Ok(match res {
+                Ok(participant) => json_response(
+                    StatusCode::CREATED,
+                    serde_json::json!({
+                        "room_id": room_id.to_string(),
+                        "participant_id": participant.participant_id.to_string(),
+                        "role": role,
+                        "updated_at_ms": participant.signaling.updated_at_ms
+                    }),
+                ),
+                Err(err) => call_error_response(err),
+            });
+        }
+        "leave" => {
+            if req.method().as_str() != "POST" {
+                return Ok(method_not_allowed_response());
+            }
+            let parsed = parse_body::<LeavePayload>(req.into_body()).await?;
+            let payload = match parsed {
+                Ok(p) => p,
+                Err(resp) => return Ok(resp),
+            };
+            let participant_id = match parse_participant_id(&payload.participant_id) {
+                Ok(id) => id,
+                Err(resp) => return Ok(resp),
+            };
+            let res = state
+                .call_manager
+                .leave_room(&sfu, room_id.clone(), participant_id);
+            return Ok(match res {
+                Ok(_) => json_response(StatusCode::OK, serde_json::json!({"status":"ok"})),
+                Err(err) => call_error_response(err),
+            });
+        }
+        "offer" => {
+            if req.method().as_str() != "POST" {
+                return Ok(method_not_allowed_response());
+            }
+            let parsed = parse_body::<OfferPayload>(req.into_body()).await?;
+            let payload = match parsed {
+                Ok(p) => p,
+                Err(resp) => return Ok(resp),
+            };
+            let participant_id = match parse_participant_id(&payload.participant_id) {
+                Ok(id) => id,
+                Err(resp) => return Ok(resp),
+            };
+            let res = state.call_manager.upsert_offer(
+                room_id.clone(),
+                participant_id.clone(),
+                payload.sdp,
+                now_ms(),
+            );
+            return Ok(match res {
+                Ok(record) => json_response(
+                    StatusCode::OK,
+                    serde_json::json!({
+                        "room_id": room_id.to_string(),
+                        "participant_id": participant_id.to_string(),
+                        "signaling": signaling_json(&record)
+                    }),
+                ),
+                Err(err) => call_error_response(err),
+            });
+        }
+        "answer" => {
+            if req.method().as_str() != "POST" {
+                return Ok(method_not_allowed_response());
+            }
+            let parsed = parse_body::<AnswerPayload>(req.into_body()).await?;
+            let payload = match parsed {
+                Ok(p) => p,
+                Err(resp) => return Ok(resp),
+            };
+            let participant_id = match parse_participant_id(&payload.participant_id) {
+                Ok(id) => id,
+                Err(resp) => return Ok(resp),
+            };
+            let res = state.call_manager.upsert_answer(
+                room_id.clone(),
+                participant_id.clone(),
+                payload.sdp,
+                now_ms(),
+            );
+            return Ok(match res {
+                Ok(record) => json_response(
+                    StatusCode::OK,
+                    serde_json::json!({
+                        "room_id": room_id.to_string(),
+                        "participant_id": participant_id.to_string(),
+                        "signaling": signaling_json(&record)
+                    }),
+                ),
+                Err(err) => call_error_response(err),
+            });
+        }
+        "ice" => {
+            if req.method().as_str() != "POST" {
+                return Ok(method_not_allowed_response());
+            }
+            let parsed = parse_body::<IcePayload>(req.into_body()).await?;
+            let payload = match parsed {
+                Ok(p) => p,
+                Err(resp) => return Ok(resp),
+            };
+            let participant_id = match parse_participant_id(&payload.participant_id) {
+                Ok(id) => id,
+                Err(resp) => return Ok(resp),
+            };
+            let direction = match parse_direction(&payload.direction) {
+                Ok(d) => d,
+                Err(resp) => return Ok(resp),
+            };
+            let res = state.call_manager.add_ice(
+                room_id.clone(),
+                participant_id.clone(),
+                payload.candidate,
+                direction,
+                now_ms(),
+            );
+            return Ok(match res {
+                Ok(record) => json_response(
+                    StatusCode::OK,
+                    serde_json::json!({
+                        "room_id": room_id.to_string(),
+                        "participant_id": participant_id.to_string(),
+                        "signaling": signaling_json(&record)
+                    }),
+                ),
+                Err(err) => call_error_response(err),
+            });
+        }
+        "state" => {
+            if req.method().as_str() != "GET" || segments.len() != 3 {
+                return Ok(method_not_allowed_response());
+            }
+            let res = state.call_manager.room_state(room_id.clone());
+            return Ok(match res {
+                Ok(room) => json_response(StatusCode::OK, room_state_json(room)),
+                Err(err) => call_error_response(err),
+            });
+        }
+        "signaling" => {
+            if req.method().as_str() != "GET" || segments.len() != 4 {
+                return Ok(not_found_response());
+            }
+            let participant_id = match parse_participant_id(segments[3]) {
+                Ok(id) => id,
+                Err(resp) => return Ok(resp),
+            };
+            let res = state
+                .call_manager
+                .get_signaling(room_id.clone(), participant_id.clone());
+            return Ok(match res {
+                Ok(record) => json_response(
+                    StatusCode::OK,
+                    serde_json::json!({
+                        "room_id": room_id.to_string(),
+                        "participant_id": participant_id.to_string(),
+                        "signaling": signaling_json(&record)
+                    }),
+                ),
+                Err(err) => call_error_response(err),
+            });
+        }
+        _ => Ok(not_found_response()),
+    }
+}
+
+async fn handle_sfu_request(
+    state: DaemonState,
+    sfu: Arc<Sfu>,
+    req: Request<Incoming>,
+) -> Result<Response<Full<Bytes>>, hyper::Error> {
     let path = req.uri().path().trim_start_matches('/');
     let segments: Vec<&str> = path.split('/').collect();
     if segments.get(0) != Some(&"sfu") || segments.get(1) != Some(&"rooms") {
@@ -357,6 +616,11 @@ async fn handle_sfu_request(sfu: Arc<Sfu>, req: Request<Incoming>) -> Result<Res
                         Ok(id) => id,
                         Err(resp) => return Ok(resp),
                     };
+                    if let Some(resp) =
+                        enforce_publish_limit(&state, &sfu, &room_id, &participant_id)
+                    {
+                        return Ok(resp);
+                    }
                     let res = sfu.publish_track(
                         room_id.clone(),
                         participant_id,
@@ -402,6 +666,11 @@ async fn handle_sfu_request(sfu: Arc<Sfu>, req: Request<Incoming>) -> Result<Res
                         Ok(id) => id,
                         Err(resp) => return Ok(resp),
                     };
+                    if let Some(resp) =
+                        enforce_subscription_limit(&state, &sfu, &room_id, &participant_id)
+                    {
+                        return Ok(resp);
+                    }
                     let res = sfu.subscribe(room_id.clone(), participant_id, track_id);
                     return Ok(match res {
                         Ok(_) => json_response(StatusCode::OK, serde_json::json!({"status":"ok"})),
@@ -511,11 +780,177 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+fn parse_direction(value: &str) -> Result<IceDirection, Response<Full<Bytes>>> {
+    match value {
+        "local" => Ok(IceDirection::Local),
+        "remote" => Ok(IceDirection::Remote),
+        _ => Err(json_response(
+            StatusCode::BAD_REQUEST,
+            serde_json::json!({"error":"invalid direction"}),
+        )),
+    }
+}
+
+fn calls_disabled_response() -> Response<Full<Bytes>> {
+    json_response(
+        StatusCode::SERVICE_UNAVAILABLE,
+        serde_json::json!({"error":"calls disabled"}),
+    )
+}
+
+fn call_error_response(err: CallManagerError) -> Response<Full<Bytes>> {
+    match err {
+        CallManagerError::RoomNotFound | CallManagerError::ParticipantNotFound => json_response(
+            StatusCode::NOT_FOUND,
+            serde_json::json!({"error": err.to_string()}),
+        ),
+        CallManagerError::ParticipantExists => json_response(
+            StatusCode::CONFLICT,
+            serde_json::json!({"error": err.to_string()}),
+        ),
+        CallManagerError::StateUnavailable => json_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            serde_json::json!({"error": err.to_string()}),
+        ),
+        CallManagerError::SfuError(err) => sfu_error_response(err),
+    }
+}
+
+fn signaling_json(record: &SignalingRecord) -> serde_json::Value {
+    serde_json::json!({
+        "offer_sdp": record.offer_sdp,
+        "answer_sdp": record.answer_sdp,
+        "ice_local": record.ice_local,
+        "ice_remote": record.ice_remote,
+        "updated_at_ms": record.updated_at_ms
+    })
+}
+
+fn room_state_json(room: CallRoomState) -> serde_json::Value {
+    let participants: Vec<serde_json::Value> = room
+        .participants
+        .values()
+        .map(|p| {
+            serde_json::json!({
+                "participant_id": p.participant_id.to_string(),
+                "role": p.role,
+                "offer": p.signaling.offer_sdp.is_some(),
+                "answer": p.signaling.answer_sdp.is_some(),
+                "ice_local": p.signaling.ice_local.len(),
+                "ice_remote": p.signaling.ice_remote.len(),
+                "updated_at_ms": p.signaling.updated_at_ms
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "room_id": room.room_id.as_room_id().to_string(),
+        "created_at_ms": room.created_at_ms,
+        "participants": participants
+    })
+}
+
+fn enforce_publish_limit(
+    state: &DaemonState,
+    sfu: &Arc<Sfu>,
+    room_id: &RoomId,
+    participant_id: &ParticipantId,
+) -> Option<Response<Full<Bytes>>> {
+    if !state.calls_enabled {
+        return None;
+    }
+    if state.calls_policy.max_publish_tracks_per_participant == 0 {
+        return Some(json_response(
+            StatusCode::FORBIDDEN,
+            serde_json::json!({"error":"publish limit reached"}),
+        ));
+    }
+    match current_publish_count(state, sfu, room_id, participant_id) {
+        Ok(count) => {
+            if count >= state.calls_policy.max_publish_tracks_per_participant as usize {
+                return Some(json_response(
+                    StatusCode::FORBIDDEN,
+                    serde_json::json!({"error":"publish limit reached"}),
+                ));
+            }
+        }
+        Err(err) => return Some(sfu_error_response(err)),
+    }
+    None
+}
+
+fn enforce_subscription_limit(
+    state: &DaemonState,
+    sfu: &Arc<Sfu>,
+    room_id: &RoomId,
+    participant_id: &ParticipantId,
+) -> Option<Response<Full<Bytes>>> {
+    if !state.calls_enabled {
+        return None;
+    }
+    if state.calls_policy.max_subscriptions_per_participant == 0 {
+        return Some(json_response(
+            StatusCode::FORBIDDEN,
+            serde_json::json!({"error":"subscription limit reached"}),
+        ));
+    }
+    match current_subscription_count(state, sfu, room_id, participant_id) {
+        Ok(count) => {
+            if count >= state.calls_policy.max_subscriptions_per_participant as usize {
+                return Some(json_response(
+                    StatusCode::FORBIDDEN,
+                    serde_json::json!({"error":"subscription limit reached"}),
+                ));
+            }
+        }
+        Err(err) => return Some(sfu_error_response(err)),
+    }
+    None
+}
+
+fn current_publish_count(
+    state: &DaemonState,
+    sfu: &Arc<Sfu>,
+    room_id: &RoomId,
+    participant_id: &ParticipantId,
+) -> Result<usize, SfuError> {
+    if let Some(adapter) = &state.sfu_adapter {
+        return Ok(adapter.publisher_count(room_id, participant_id));
+    }
+    let info = sfu.room_info(room_id.clone())?;
+    Ok(info
+        .tracks
+        .into_iter()
+        .filter(|track| track.publisher == *participant_id)
+        .count())
+}
+
+fn current_subscription_count(
+    state: &DaemonState,
+    sfu: &Arc<Sfu>,
+    room_id: &RoomId,
+    participant_id: &ParticipantId,
+) -> Result<usize, SfuError> {
+    if let Some(adapter) = &state.sfu_adapter {
+        return Ok(adapter.subscription_count(room_id, participant_id));
+    }
+    let list = sfu.subscriptions(room_id.clone(), participant_id.clone())?;
+    Ok(list.len())
+}
+
 #[derive(Deserialize)]
 struct JoinPayload {
     participant_id: String,
     #[serde(default)]
     display_name: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct CallJoinPayload {
+    participant_id: String,
+    #[serde(default)]
+    display_name: Option<String>,
+    #[serde(default)]
+    role: Option<CallRole>,
 }
 
 #[derive(Deserialize)]
@@ -542,238 +977,24 @@ struct SubscriptionPayload {
     track_id: String,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::config::{IdentityConfig, LoggingConfig, RegistryConfig, RelayConfig, SfuConfig, TransportConfig, WebRtcConfig};
-    use enigma_core::policy::Policy;
-    use hyper::client::conn::http1 as client_http1;
-    use hyper::server::conn::http1 as server_http1;
-    use std::time::Duration;
-    use tempfile::tempdir;
-    use tokio::io::duplex;
-
-    #[tokio::test]
-    async fn config_round_trip() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("conf.toml");
-        let cfg = format!(
-            r#"
-data_dir = "{dir}"
-
-[identity]
-user_handle = "alice"
-device_name = "device"
-
-[policy]
-max_text_bytes = 1
-max_message_rate_per_minute = 1
-max_inline_media_bytes = 1
-max_attachment_chunk_bytes = 1
-max_attachment_parallel_chunks = 1
-max_group_name_len = 1
-max_channel_name_len = 1
-max_membership_changes_per_minute = 1
-max_retry_window_secs = 1
-backoff_initial_ms = 1
-backoff_max_ms = 1
-outbox_batch_send = 1
-directory_ttl_secs = 1
-directory_refresh_on_send = false
-receipt_aggregation = "Any"
-group_crypto_mode = "Fanout"
-sender_keys_rotate_every_msgs = 1
-sender_keys_rotate_on_membership_change = false
-
-[registry]
-enabled = true
-endpoints = []
-
-[relay]
-enabled = true
-endpoint = "https://relay.example.com"
-
-[transport.webrtc]
-enabled = false
-stun_servers = []
-
-[sfu]
-enabled = false
-
-[logging]
-level = "info"
-"#,
-            dir = dir.path().display()
-        );
-        std::fs::write(&path, cfg).unwrap();
-        let loaded = config::load_config(&path).unwrap();
-        assert_eq!(loaded.identity.user_handle, "alice");
-        assert!(loaded.relay.enabled);
-    }
-
-    #[tokio::test]
-    async fn daemon_starts_and_stops() {
-        let dir = tempdir().unwrap();
-        let cfg = EnigmaConfig {
-            data_dir: dir.path().to_path_buf(),
-            identity: IdentityConfig {
-                user_handle: "alice".to_string(),
-                device_name: None,
-            },
-            policy: Policy::default(),
-            registry: RegistryConfig {
-                enabled: true,
-                endpoints: Vec::new(),
-            },
-            relay: RelayConfig {
-                enabled: true,
-                endpoint: None,
-            },
-            transport: TransportConfig {
-                webrtc: WebRtcConfig {
-                    enabled: false,
-                    stun_servers: Vec::new(),
-                },
-            },
-            sfu: SfuConfig {
-                enabled: false,
-            },
-            logging: LoggingConfig {
-                level: "error".to_string(),
-            },
-        };
-        init_logging(&cfg);
-        let core = init_core(&cfg).await.unwrap();
-        let state = DaemonState {
-            core,
-            sfu: init_sfu(&cfg),
-        };
-        let (tx, rx) = oneshot::channel();
-        let (_addr, handle) = start_control_server(state, rx).await.unwrap();
-        let _ = tx.send(());
-        let _ = tokio::time::timeout(Duration::from_secs(2), handle).await;
-    }
-
-    #[tokio::test]
-    async fn sfu_control_endpoints() {
-        let dir = tempdir().unwrap();
-        let cfg = EnigmaConfig {
-            data_dir: dir.path().to_path_buf(),
-            identity: IdentityConfig {
-                user_handle: "alice".to_string(),
-                device_name: None,
-            },
-            policy: Policy::default(),
-            registry: RegistryConfig {
-                enabled: true,
-                endpoints: Vec::new(),
-            },
-            relay: RelayConfig {
-                enabled: true,
-                endpoint: None,
-            },
-            transport: TransportConfig {
-                webrtc: WebRtcConfig {
-                    enabled: false,
-                    stun_servers: Vec::new(),
-                },
-            },
-            sfu: SfuConfig {
-                enabled: true,
-            },
-            logging: LoggingConfig {
-                level: "error".to_string(),
-            },
-        };
-        init_logging(&cfg);
-        let core = init_core(&cfg).await.unwrap();
-        let state = DaemonState {
-            core,
-            sfu: init_sfu(&cfg),
-        };
-        let (tx, rx) = oneshot::channel();
-        let (addr, handle) = start_control_server(state.clone(), rx).await.unwrap();
-        let health = dispatch_request(state.clone(), addr, build_request("GET", "/health", None)).await;
-        assert_eq!(health.status(), StatusCode::OK);
-        let health_body = collect_bytes(health.into_body()).await.unwrap();
-        let health_json: serde_json::Value = serde_json::from_slice(&health_body).unwrap();
-        assert_eq!(health_json["status"], "ok");
-        let rooms = dispatch_request(state.clone(), addr, build_request("GET", "/sfu/rooms", None)).await;
-        assert_eq!(rooms.status(), StatusCode::OK);
-        let rooms_body = collect_bytes(rooms.into_body()).await.unwrap();
-        let rooms_json: serde_json::Value = serde_json::from_slice(&rooms_body).unwrap();
-        assert_eq!(
-            rooms_json["rooms"].as_array().map(|a| a.is_empty()),
-            Some(true)
-        );
-        let create = dispatch_request(state.clone(), addr, build_request("POST", "/sfu/rooms/test-room/create", None)).await;
-        assert_eq!(create.status(), StatusCode::CREATED);
-        let create_body = collect_bytes(create.into_body()).await.unwrap();
-        let create_json: serde_json::Value = serde_json::from_slice(&create_body).unwrap();
-        assert_eq!(create_json["room_id"], "test-room");
-        let info = dispatch_request(state.clone(), addr, build_request("GET", "/sfu/rooms/test-room", None)).await;
-        assert_eq!(info.status(), StatusCode::OK);
-        let info_body = collect_bytes(info.into_body()).await.unwrap();
-        let info_json: serde_json::Value = serde_json::from_slice(&info_body).unwrap();
-        assert_eq!(info_json["room_id"], "test-room");
-        assert_eq!(info_json["participants"].as_array().map(|a| a.len()), Some(0));
-        assert_eq!(info_json["tracks"].as_array().map(|a| a.len()), Some(0));
-        let _ = tx.send(());
-        let _ = tokio::time::timeout(Duration::from_secs(2), handle).await;
-    }
-
-    fn build_request(method: &str, path: &str, body: Option<serde_json::Value>) -> Request<Full<Bytes>> {
-        let mut builder = Request::builder()
-            .method(method)
-            .uri(path)
-            .header("host", "localhost");
-        if body.is_some() {
-            builder = builder.header(CONTENT_TYPE, "application/json");
-        }
-        let bytes = body
-            .map(|value| value.to_string().into_bytes())
-            .unwrap_or_default();
-        builder
-            .body(Full::from(Bytes::from(bytes)))
-            .unwrap()
-    }
-
-    async fn dispatch_request(state: DaemonState, addr: Option<SocketAddr>, req: Request<Full<Bytes>>) -> Response<Incoming> {
-        if let Some(addr) = addr {
-            return send_request(addr, req).await;
-        }
-        send_in_memory_request(state, req).await
-    }
-
-    async fn send_request(addr: SocketAddr, req: Request<Full<Bytes>>) -> Response<Incoming> {
-        let stream = tokio::net::TcpStream::connect(addr).await.unwrap();
-        let io = TokioIo::new(stream);
-        let (mut sender, connection) = client_http1::handshake(io).await.unwrap();
-        tokio::spawn(async move {
-            let _ = connection.await;
-        });
-        sender.send_request(req).await.unwrap()
-    }
-
-    async fn send_in_memory_request(state: DaemonState, req: Request<Full<Bytes>>) -> Response<Incoming> {
-        let (client, server) = duplex(4096);
-        let server_state = state.clone();
-        let service = service_fn(move |incoming: Request<Incoming>| {
-            let inner = server_state.clone();
-            async move { handle_request(inner, incoming).await }
-        });
-        let server_task = tokio::spawn(async move {
-            let io = TokioIo::new(server);
-            let _ = server_http1::Builder::new().serve_connection(io, service).await;
-        });
-        let io = TokioIo::new(client);
-        let (mut sender, connection) = client_http1::handshake(io).await.unwrap();
-        tokio::spawn(async move {
-            let _ = connection.await;
-        });
-        let response = sender.send_request(req).await.unwrap();
-        drop(sender);
-        let _ = server_task.await;
-        response
-    }
+#[derive(Deserialize)]
+struct OfferPayload {
+    participant_id: String,
+    sdp: String,
 }
+
+#[derive(Deserialize)]
+struct AnswerPayload {
+    participant_id: String,
+    sdp: String,
+}
+
+#[derive(Deserialize)]
+struct IcePayload {
+    participant_id: String,
+    candidate: String,
+    direction: String,
+}
+
+#[cfg(test)]
+mod tests;
