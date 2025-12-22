@@ -64,11 +64,18 @@ pub enum ReceiptStatus {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct OutgoingRecipient {
+    pub recipient_user_id: Option<String>,
+    pub recipient_handle: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OutgoingMessageRequest {
     pub client_message_id: MessageId,
     pub conversation_id: ConversationId,
     pub sender: UserIdHex,
-    pub recipients: Vec<UserIdHex>,
+    pub recipients: Vec<OutgoingRecipient>,
     pub kind: MessageKind,
     pub text: Option<String>,
     pub attachment: Option<AttachmentDescriptor>,

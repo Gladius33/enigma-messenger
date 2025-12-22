@@ -1,4 +1,4 @@
-use super::{base_config, key_provider, temp_path};
+use super::{base_config, key_provider, recipient_user, temp_path};
 use crate::config::TransportMode;
 use crate::directory::InMemoryRegistry;
 use crate::messaging::MockTransport;
@@ -46,9 +46,7 @@ async fn send_and_receive_text_with_edits_and_deletes() {
         sender: UserIdHex {
             value: core_a.local_identity().user_id.to_hex(),
         },
-        recipients: vec![UserIdHex {
-            value: core_b.local_identity().user_id.to_hex(),
-        }],
+        recipients: vec![recipient_user(&core_b.local_identity().user_id.to_hex())],
         kind: MessageKind::Text,
         text: Some("hello".to_string()),
         attachment: None,
@@ -70,9 +68,7 @@ async fn send_and_receive_text_with_edits_and_deletes() {
         sender: UserIdHex {
             value: core_a.local_identity().user_id.to_hex(),
         },
-        recipients: vec![UserIdHex {
-            value: core_b.local_identity().user_id.to_hex(),
-        }],
+        recipients: vec![recipient_user(&core_b.local_identity().user_id.to_hex())],
         kind: MessageKind::Text,
         text: Some("hello-edited".to_string()),
         attachment: None,
@@ -92,9 +88,7 @@ async fn send_and_receive_text_with_edits_and_deletes() {
         sender: UserIdHex {
             value: core_a.local_identity().user_id.to_hex(),
         },
-        recipients: vec![UserIdHex {
-            value: core_b.local_identity().user_id.to_hex(),
-        }],
+        recipients: vec![recipient_user(&core_b.local_identity().user_id.to_hex())],
         kind: MessageKind::System,
         text: None,
         attachment: None,

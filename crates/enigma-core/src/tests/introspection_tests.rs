@@ -6,6 +6,7 @@ use crate::directory::InMemoryRegistry;
 use crate::messaging::MockTransport;
 use crate::policy::Policy;
 use crate::relay::InMemoryRelay;
+use crate::time::now_ms;
 use crate::Core;
 use std::sync::Arc;
 
@@ -42,8 +43,15 @@ async fn stats_and_health_work() {
     assert!(health.ok);
     let registry_status = core.registry_status().await;
     assert!(registry_status.endpoints.is_empty());
-    assert_eq!(core.directory_len(), 0);
-    core.directory
-        .add("self".to_string(), core.local_identity().user_id.clone());
-    assert_eq!(core.directory_len(), 1);
+    assert_eq!(core.directory_len().await, 0);
+    let _ = core
+        .directory
+        .add_or_update_contact(
+            "@self",
+            &core.local_identity().user_id.to_hex(),
+            None,
+            now_ms(),
+        )
+        .await;
+    assert_eq!(core.directory_len().await, 1);
 }

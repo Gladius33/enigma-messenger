@@ -1,4 +1,5 @@
 pub mod attachments_tests;
+pub mod directory_tests;
 pub mod groups_channels_tests;
 pub mod hybrid_fallback_tests;
 pub mod identity_tests;
@@ -11,6 +12,7 @@ pub mod outbox_retry_tests;
 pub mod relay_ack_persistence_tests;
 
 use crate::config::{CoreConfig, TransportMode};
+use enigma_api::types::OutgoingRecipient;
 use enigma_storage::key_provider::{KeyProvider, MasterKey};
 use enigma_storage::EnigmaStorageError;
 use std::sync::Arc;
@@ -52,4 +54,11 @@ pub fn base_config(path: String, mode: TransportMode) -> CoreConfig {
 
 pub fn key_provider() -> Arc<TestKeyProvider> {
     Arc::new(TestKeyProvider)
+}
+
+pub fn recipient_user(user: &str) -> OutgoingRecipient {
+    OutgoingRecipient {
+        recipient_user_id: Some(user.to_string()),
+        recipient_handle: None,
+    }
 }

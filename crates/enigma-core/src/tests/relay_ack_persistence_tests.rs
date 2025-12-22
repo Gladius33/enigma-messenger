@@ -1,4 +1,4 @@
-use super::{base_config, key_provider, temp_path};
+use super::{base_config, key_provider, recipient_user, temp_path};
 use crate::config::TransportMode;
 use crate::directory::InMemoryRegistry;
 use crate::error::CoreError;
@@ -95,9 +95,7 @@ async fn relay_ack_waits_for_persistence() {
         sender: UserIdHex {
             value: core_a.local_identity().user_id.to_hex(),
         },
-        recipients: vec![UserIdHex {
-            value: core_b.local_identity().user_id.to_hex(),
-        }],
+        recipients: vec![recipient_user(&core_b.local_identity().user_id.to_hex())],
         kind: MessageKind::Text,
         text: Some("persist".to_string()),
         attachment: None,

@@ -1,4 +1,4 @@
-use super::{base_config, key_provider, temp_path};
+use super::{base_config, key_provider, recipient_user, temp_path};
 use crate::config::TransportMode;
 use crate::directory::InMemoryRegistry;
 use crate::messaging::MockTransport;
@@ -57,9 +57,7 @@ async fn group_and_channel_rules_apply() {
         sender: UserIdHex {
             value: core_a.local_identity().user_id.to_hex(),
         },
-        recipients: vec![UserIdHex {
-            value: core_b.local_identity().user_id.to_hex(),
-        }],
+        recipients: vec![recipient_user(&core_b.local_identity().user_id.to_hex())],
         kind: MessageKind::Text,
         text: Some("hello group".to_string()),
         attachment: None,
@@ -83,9 +81,7 @@ async fn group_and_channel_rules_apply() {
         sender: UserIdHex {
             value: core_b.local_identity().user_id.to_hex(),
         },
-        recipients: vec![UserIdHex {
-            value: core_a.local_identity().user_id.to_hex(),
-        }],
+        recipients: vec![recipient_user(&core_a.local_identity().user_id.to_hex())],
         kind: MessageKind::ChannelPost,
         text: Some("blocked".to_string()),
         attachment: None,

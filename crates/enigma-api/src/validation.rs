@@ -41,6 +41,30 @@ pub fn validate_message_request(
     if req.recipients.is_empty() {
         return Err(ValidationError::Empty("recipients"));
     }
+    for recipient in req.recipients.iter() {
+        let has_user = recipient
+            .recipient_user_id
+            .as_ref()
+            .map(|v| !v.trim().is_empty())
+            .unwrap_or(false);
+        let has_handle = recipient
+            .recipient_handle
+            .as_ref()
+            .map(|v| !v.trim().is_empty())
+            .unwrap_or(false);
+        if has_user == has_handle {
+            return Err(ValidationError::InvalidSize("recipient_selector"));
+        }
+        if let Some(handle) = recipient.recipient_handle.as_ref() {
+            if !handle.starts_with('@') {
+                return Err(ValidationError::InvalidSize("recipient_handle"));
+            }
+            let len = handle.len();
+            if len < 2 || len > 64 {
+                return Err(ValidationError::InvalidSize("recipient_handle"));
+            }
+        }
+    }
     if req.text.as_deref().unwrap_or("").len() > limits.max_text_bytes {
         return Err(ValidationError::TooLong("text"));
     }

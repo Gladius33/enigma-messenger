@@ -1,4 +1,4 @@
-use super::{base_config, key_provider, temp_path};
+use super::{base_config, key_provider, recipient_user, temp_path};
 use crate::config::TransportMode;
 use crate::directory::InMemoryRegistry;
 use crate::messaging::MockTransport;
@@ -38,9 +38,7 @@ async fn oversize_text_is_rejected() {
         sender: UserIdHex {
             value: core.local_identity().user_id.to_hex(),
         },
-        recipients: vec![UserIdHex {
-            value: core.local_identity().user_id.to_hex(),
-        }],
+        recipients: vec![recipient_user(&core.local_identity().user_id.to_hex())],
         kind: MessageKind::Text,
         text: Some("toolong".to_string()),
         attachment: None,
@@ -84,9 +82,7 @@ async fn attachments_disabled_policy() {
         sender: UserIdHex {
             value: core.local_identity().user_id.to_hex(),
         },
-        recipients: vec![UserIdHex {
-            value: core.local_identity().user_id.to_hex(),
-        }],
+        recipients: vec![recipient_user(&core.local_identity().user_id.to_hex())],
         kind: MessageKind::File,
         text: None,
         attachment: Some(descriptor),

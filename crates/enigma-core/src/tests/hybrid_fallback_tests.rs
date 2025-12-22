@@ -1,4 +1,4 @@
-use super::{base_config, key_provider, temp_path};
+use super::{base_config, key_provider, recipient_user, temp_path};
 use crate::config::TransportMode;
 use crate::directory::InMemoryRegistry;
 use crate::messaging::MockTransport;
@@ -47,9 +47,7 @@ async fn hybrid_falls_back_to_relay_when_p2p_fails() {
         sender: UserIdHex {
             value: core_a.local_identity().user_id.to_hex(),
         },
-        recipients: vec![UserIdHex {
-            value: core_b.local_identity().user_id.to_hex(),
-        }],
+        recipients: vec![recipient_user(&core_b.local_identity().user_id.to_hex())],
         kind: MessageKind::Text,
         text: Some("fallback".to_string()),
         attachment: None,

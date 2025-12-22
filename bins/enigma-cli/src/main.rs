@@ -1,5 +1,5 @@
 use enigma_api::types::{
-    ConversationId, MessageId, MessageKind, OutgoingMessageRequest, UserIdHex,
+    ConversationId, MessageId, MessageKind, OutgoingMessageRequest, OutgoingRecipient, UserIdHex,
 };
 use enigma_core::config::{CoreConfig, TransportMode};
 use enigma_core::directory::InMemoryRegistry;
@@ -71,8 +71,9 @@ async fn main() {
                     sender: UserIdHex {
                         value: core.local_identity().user_id.to_hex(),
                     },
-                    recipients: vec![UserIdHex {
-                        value: recipient_hex.clone(),
+                    recipients: vec![OutgoingRecipient {
+                        recipient_user_id: Some(recipient_hex.clone()),
+                        recipient_handle: None,
                     }],
                     kind: MessageKind::Text,
                     text: Some(text),

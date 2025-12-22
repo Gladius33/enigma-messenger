@@ -6,6 +6,7 @@ pub struct CoreStats {
     pub groups: usize,
     pub channels: usize,
     pub pending_outbox: usize,
+    pub directory_len: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,6 +27,7 @@ impl crate::Core {
         let channels = self.channels.len().await;
         let conversations = groups + channels;
         let pending_outbox = self.relay.pending_len().await;
+        let directory_len = self.directory.len().await;
         CoreStats {
             user_id_hex: self.identity.user_id.to_hex(),
             device_id: self.identity.device_id,
@@ -33,6 +35,7 @@ impl crate::Core {
             groups,
             channels,
             pending_outbox,
+            directory_len,
         }
     }
 
@@ -49,7 +52,7 @@ impl crate::Core {
         StoreHealth { namespace, ok }
     }
 
-    pub fn directory_len(&self) -> usize {
-        self.directory.len()
+    pub async fn directory_len(&self) -> usize {
+        self.directory.len().await
     }
 }

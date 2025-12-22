@@ -9,6 +9,7 @@ pub mod groups;
 pub mod identity;
 pub mod ids;
 pub mod messaging;
+pub mod node;
 pub mod outbox;
 pub mod packet;
 pub mod policy;
@@ -32,7 +33,7 @@ use config::{CoreConfig, TransportMode};
 use directory::{register_identity, ContactDirectory, RegistryClient};
 use enigma_api::types::{
     ConversationId as ApiConversationId, IncomingMessageEvent, MessageId, OutgoingMessageRequest,
-    ReceiptStatus, UserIdHex, ValidationLimits,
+    OutgoingRecipient, ReceiptStatus, UserIdHex, ValidationLimits,
 };
 use enigma_node_types::{OpaqueMessage, RelayEnvelope, RelayKind, UserId as NodeUserId};
 use enigma_storage::key_provider::KeyProvider;
@@ -43,6 +44,7 @@ use groups::{GroupState, NullGroupCryptoProvider};
 use identity::LocalIdentity;
 use ids::{conversation_id_for_dm, ConversationId, UserId};
 use messaging::{MockTransport, Transport};
+use node::{DirectoryResolver, NodeDirectoryResolver};
 use outbox::{Outbox, OutboxItem};
 use packet::{
     build_frame, decode_frame, deserialize_envelope, serialize_envelope, PlainMessage, WireEnvelope,
@@ -51,9 +53,9 @@ use policy::Policy;
 use relay::{RelayClient, RelayGateway};
 use session::SessionManager;
 use std::collections::HashMap;
-use std::sync::Arc;
 #[cfg(test)]
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use time::now_ms;
 use tokio::sync::Mutex;
@@ -71,6 +73,7 @@ pub struct Core {
     registry: Arc<dyn RegistryClient>,
     relay: RelayGateway,
     transport: Arc<dyn Transport>,
+    resolver: Arc<dyn DirectoryResolver>,
     directory: ContactDirectory,
     events: EventBus,
     groups: GroupState,
@@ -98,6 +101,9 @@ impl Core {
         let identity = LocalIdentity::load_or_create(&store, config.device_name.clone())?;
         let sessions = SessionManager::new(identity.user_id.clone());
         let store_arc = Arc::new(Mutex::new(store));
+        let directory = ContactDirectory::new(store_arc.clone());
+        let resolver: Arc<dyn DirectoryResolver> =
+            Arc::new(NodeDirectoryResolver::new(&config.node_base_urls));
         let core = Self {
             config: config.clone(),
             policy: policy.clone(),
@@ -109,7 +115,8 @@ impl Core {
             registry: registry.clone(),
             relay: RelayGateway::new(relay_client.clone()),
             transport,
-            directory: ContactDirectory::new(),
+            resolver,
+            directory,
             events: EventBus::new(256),
             groups: GroupState::new(policy.clone(), Arc::new(NullGroupCryptoProvider)),
             channels: ChannelState::new(policy.clone()),
@@ -117,11 +124,6 @@ impl Core {
             #[cfg(test)]
             persist_fail: Arc::new(AtomicBool::new(false)),
         };
-        {
-            let guard = core.store.lock().await;
-            let _ = guard.get("identity").ok();
-        }
-        let _ = core.directory.lookup(&identity.user_id.to_hex());
         register_identity(core.registry.clone(), &identity).await?;
         if core.config.polling_interval_ms > 0 {
             core.start_relay_poller();
@@ -129,6 +131,7 @@ impl Core {
         if core.policy.outbox_batch_send > 0 {
             core.start_outbox_worker();
         }
+        core.start_presence_announcer();
         Ok(core)
     }
 
@@ -181,7 +184,8 @@ impl Core {
         }
         let sender_hex = request.sender.value.clone();
         for recipient in request.recipients.iter() {
-            let recipient_user = UserId::from_hex(&recipient.value)
+            let recipient_hex = self.resolve_recipient(recipient).await?;
+            let recipient_user = UserId::from_hex(&recipient_hex)
                 .ok_or(CoreError::Validation("recipient".to_string()))?;
             let key = {
                 let mut sessions = self.sessions.lock().await;
@@ -220,12 +224,12 @@ impl Core {
                 created_at_ms: now_ms(),
                 next_retry_ms: now_ms(),
                 tries: 0,
-                recipient_user_id: recipient.value.clone(),
+                recipient_user_id: recipient_hex.clone(),
                 conversation_id: request.conversation_id.value.clone(),
                 packet: bytes.clone(),
             };
             let _ = self.outbox.put(item).await;
-            let sent = self.send_outbox_item_bytes(&recipient.value, &bytes).await;
+            let sent = self.send_outbox_item_bytes(&recipient_hex, &bytes).await;
             if sent.is_ok() {
                 let _ = self.outbox.mark_sent(&outbox_id).await;
             } else {
@@ -244,14 +248,12 @@ impl Core {
                             created_at_ms: now_ms(),
                             next_retry_ms: now_ms(),
                             tries: 0,
-                            recipient_user_id: recipient.value.clone(),
+                            recipient_user_id: recipient_hex.clone(),
                             conversation_id: request.conversation_id.value.clone(),
                             packet: payload.clone(),
                         };
                         let _ = self.outbox.put(att_item).await;
-                        let att_sent = self
-                            .send_outbox_item_bytes(&recipient.value, &payload)
-                            .await;
+                        let att_sent = self.send_outbox_item_bytes(&recipient_hex, &payload).await;
                         if att_sent.is_ok() {
                             let _ = self.outbox.mark_sent(&att_id).await;
                         } else {
@@ -418,6 +420,20 @@ impl Core {
         });
     }
 
+    fn start_presence_announcer(&self) {
+        let cloned = self.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_secs(60));
+            loop {
+                ticker.tick().await;
+                let _ = cloned
+                    .resolver
+                    .announce_presence(&cloned.identity.public_identity)
+                    .await;
+            }
+        });
+    }
+
     fn start_outbox_worker(&self) {
         let cloned = self.clone();
         let batch = self.policy.outbox_batch_send;
@@ -450,6 +466,40 @@ impl Core {
     async fn send_outbox_item(&self, item: &OutboxItem) -> Result<(), CoreError> {
         self.send_outbox_item_bytes(&item.recipient_user_id, &item.packet)
             .await
+    }
+
+    #[cfg(test)]
+    pub fn set_resolver(&mut self, resolver: Arc<dyn DirectoryResolver>) {
+        self.resolver = resolver;
+    }
+
+    async fn resolve_recipient(&self, recipient: &OutgoingRecipient) -> Result<String, CoreError> {
+        if let Some(user) = recipient.recipient_user_id.as_ref() {
+            let trimmed = user.trim();
+            if trimmed.is_empty() {
+                return Err(CoreError::Validation("recipient".to_string()));
+            }
+            return Ok(trimmed.to_string());
+        }
+        if let Some(handle) = recipient.recipient_handle.as_ref() {
+            let handle_trimmed = handle.trim();
+            let now = now_ms();
+            let ttl_ms = self.policy.directory_ttl_secs.saturating_mul(1000);
+            if let Some(contact) = self.directory.get_by_handle(handle_trimmed).await {
+                let fresh = now.saturating_sub(contact.last_resolved_ms) <= ttl_ms;
+                if fresh || !self.policy.directory_refresh_on_send {
+                    return Ok(contact.user_id);
+                }
+            }
+            let (user_id, identity) = self.resolver.resolve_handle(handle_trimmed).await?;
+            let _ = self
+                .directory
+                .add_or_update_contact(handle_trimmed, &user_id, None, now)
+                .await;
+            let _ = identity;
+            return Ok(user_id);
+        }
+        Err(CoreError::Validation("recipient".to_string()))
     }
 
     pub async fn create_group(&self, name: String) -> Result<ConversationId, CoreError> {

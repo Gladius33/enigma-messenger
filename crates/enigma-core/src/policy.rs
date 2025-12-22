@@ -15,6 +15,8 @@ pub struct Policy {
     pub backoff_initial_ms: u64,
     pub backoff_max_ms: u64,
     pub outbox_batch_send: usize,
+    pub directory_ttl_secs: u64,
+    pub directory_refresh_on_send: bool,
 }
 
 impl Default for Policy {
@@ -32,6 +34,8 @@ impl Default for Policy {
             backoff_initial_ms: 500,
             backoff_max_ms: 60000,
             outbox_batch_send: 32,
+            directory_ttl_secs: 3600,
+            directory_refresh_on_send: true,
         }
     }
 }
