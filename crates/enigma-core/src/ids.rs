@@ -1,7 +1,9 @@
 use blake3::Hasher;
 use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
+use std::str::FromStr;
 use uuid::Uuid;
+use thiserror::Error;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -18,6 +20,12 @@ pub struct ConversationId {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DeviceId(pub Uuid);
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum DeviceIdParseError {
+    #[error("invalid_device_id")]
+    Invalid,
+}
 
 impl UserId {
     pub fn from_bytes(bytes: [u8; 32]) -> Self {
@@ -79,6 +87,22 @@ impl DeviceId {
 
     pub fn as_uuid(&self) -> Uuid {
         self.0
+    }
+}
+
+impl Display for DeviceId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0.hyphenated())
+    }
+}
+
+impl FromStr for DeviceId {
+    type Err = DeviceIdParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Uuid::parse_str(s)
+            .map(DeviceId)
+            .map_err(|_| DeviceIdParseError::Invalid)
     }
 }
 
