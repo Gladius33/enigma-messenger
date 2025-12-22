@@ -2,12 +2,27 @@
 name = "enigma-node-types"
 version = "0.0.1"
 edition = "2021"
-authors = ["Sébastien TOUILLEUX (Gladius33)"]
 license = "MIT"
-description = "Stub types for Enigma nodes"
-repository = "https://github.com/gladius33/enigma-messenger"
-homepage = "https://github.com/gladius33/enigma-messenger"
+authors = ["Sébastien TOUILLEUX (Gladius33)"]
+description = "Canonical node-facing types and strict codecs for Enigma (UserId hashing, identities, presence, relay envelopes)."
+repository = "https://github.com/Gladius33/enigma-node-types"
+homepage = "https://github.com/Gladius33/enigma-node-types"
+documentation = "https://docs.rs/enigma-node-types"
+readme = "README.md"
+keywords = ["p2p", "registry", "relay", "privacy", "enigma"]
+categories = ["network-programming", "cryptography"]
+rust-version = "1.75"
+include = ["src/**", "docs/**", "README.md", "LICENSE", "Cargo.toml", ".gitignore"]
 
 [dependencies]
-serde = { workspace = true, features = ["derive"] }
-uuid = { workspace = true }
+thiserror = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["serde", "v4"] }
+base64 = "0.22"
+blake3 = "1"
+hex = "0.4"
+enigma-api = { path = "../../crates/enigma-api", version = "0.0.1" }
+
+[dev-dependencies]
+serde_json = "1"

@@ -2,6 +2,7 @@ pub mod attachments;
 pub mod channels;
 pub mod config;
 pub mod directory;
+pub mod envelope_crypto;
 pub mod error;
 pub mod event;
 pub mod extensions;

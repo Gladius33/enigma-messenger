@@ -18,7 +18,8 @@ edition = "2021"
 
 [patch.crates-io]
 enigma-storage = { git = "https://github.com/Gladius33/enigma-storage" }
-enigma-node-types = { git = "https://github.com/Gladius33/enigma-node-types" }
+enigma-node-types = { path = "vendor/enigma-node-types" }
+enigma-node-client = { path = "vendor/enigma-node-client" }
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }

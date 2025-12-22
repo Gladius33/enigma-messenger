@@ -1,9 +1,11 @@
 use crate::directory::DeviceInfo;
+use crate::envelope_crypto::decrypt_identity_envelope;
 use crate::error::CoreError;
 use crate::time::now_ms;
 use async_trait::async_trait;
 use enigma_node_client::{NodeClient, NodeClientConfig};
-use enigma_node_types::{Presence, PublicIdentity, UserId as NodeUserId};
+use enigma_node_types::{canonical_handle, Presence, PublicIdentity, ResolveRequest, MAX_IDENTITY_CIPHERTEXT};
+use x25519_dalek::{PublicKey, StaticSecret};
 use std::sync::Arc;
 
 #[async_trait]
@@ -38,12 +40,11 @@ impl NodeDirectoryResolver {
     }
 
     fn normalize_handle(handle: &str) -> Result<String, CoreError> {
-        let trimmed = handle.trim();
-        let value = trimmed.strip_prefix('@').unwrap_or(trimmed);
-        if value.is_empty() {
+        let canonical = canonical_handle(handle);
+        if canonical.is_empty() {
             return Err(CoreError::Validation("handle".to_string()));
         }
-        Ok(value.to_string())
+        Ok(canonical)
     }
 }
 
@@ -51,16 +52,33 @@ impl NodeDirectoryResolver {
 impl DirectoryResolver for NodeDirectoryResolver {
     async fn resolve_handle(&self, handle: &str) -> Result<(String, PublicIdentity), CoreError> {
         let username = Self::normalize_handle(handle)?;
-        let user_id = NodeUserId::from_username(&username)
-            .map_err(|_| CoreError::Validation("handle".to_string()))?;
-        let user_hex = user_id.to_hex();
         if let Some(client) = self.client() {
+            let secret = StaticSecret::random_from_rng(rand::rngs::OsRng);
+            let requester = PublicKey::from(&secret).to_bytes();
+            let req = ResolveRequest {
+                handle: username.clone(),
+                requester_ephemeral_public_key: requester,
+            };
             let resp = client
-                .resolve(&user_hex)
+                .resolve(req)
                 .await
                 .map_err(|e| CoreError::Transport(format!("{:?}", e)))?;
-            if let Some(identity) = resp.identity {
-                return Ok((user_hex, identity));
+            if let Some(envelope) = resp.envelope {
+                let plaintext = decrypt_identity_envelope(
+                    secret.to_bytes(),
+                    None,
+                    &envelope,
+                    &username,
+                    MAX_IDENTITY_CIPHERTEXT,
+                    None,
+                )
+                .map_err(|_| CoreError::Crypto)?;
+                let identity: PublicIdentity =
+                    serde_json::from_slice(&plaintext).map_err(|_| CoreError::Crypto)?;
+                identity
+                    .validate()
+                    .map_err(|_| CoreError::Validation("identity".to_string()))?;
+                return Ok((identity.user_id.to_hex(), identity));
             }
         }
         Err(CoreError::NotFound)
@@ -68,11 +86,9 @@ impl DirectoryResolver for NodeDirectoryResolver {
 
     async fn check_user(&self, handle: &str) -> Result<bool, CoreError> {
         let username = Self::normalize_handle(handle)?;
-        let user_id = NodeUserId::from_username(&username)
-            .map_err(|_| CoreError::Validation("handle".to_string()))?;
         if let Some(client) = self.client() {
             let resp = client
-                .check_user(&user_id.to_hex())
+                .check_user(&username)
                 .await
                 .map_err(|e| CoreError::Transport(format!("{:?}", e)))?;
             return Ok(resp.exists);

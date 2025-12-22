@@ -1,40 +1,29 @@
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
+mod codec;
+mod error;
+mod identity;
+mod node;
+mod presence;
+mod relay;
+mod user_id;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PublicIdentity {
-    pub user_id: String,
-    pub device_id: String,
-}
+pub use crate::codec::{from_json_str, to_json_string};
+pub use crate::error::{EnigmaNodeTypesError, Result};
+pub use crate::identity::{
+    signed_payload, CheckUserResponse, EnvelopePubKey, PublicIdentity, RegisterRequest,
+    RegisterResponse, ResolveRequest, ResolveResponse, SyncRequest, SyncResponse,
+    MAX_IDENTITY_CIPHERTEXT,
+};
+pub use crate::node::{NodeInfo, NodesPayload};
+pub use crate::presence::Presence;
+pub use crate::relay::{
+    OpaqueAttachmentChunk, OpaqueMessage, OpaqueSignaling, RelayAckRequest, RelayAckResponse,
+    RelayEnvelope, RelayKind, RelayPullResponse, RelayPushRequest, RelayPushResponse,
+};
+pub use crate::user_id::{normalize_username, UserId};
+pub use enigma_api::identity_envelope::{
+    canonical_handle, compute_blind_index, BlindIndex, IdentityEnvelope, KeyId,
+    RegistryEnvelopePublicKey,
+};
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct NodeRecord {
-    pub base_url: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub enum EnvelopePayload {
-    Message(Vec<u8>),
-    AttachmentChunk(Vec<u8>),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RelayEnvelope {
-    pub id: Uuid,
-    pub recipient: String,
-    pub payload: EnvelopePayload,
-}
-
-impl RelayEnvelope {
-    pub fn new(recipient: String, payload: EnvelopePayload) -> Self {
-        Self {
-            id: Uuid::new_v4(),
-            recipient,
-            payload,
-        }
-    }
-}
+#[cfg(test)]
+mod tests;

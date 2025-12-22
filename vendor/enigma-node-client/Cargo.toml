@@ -2,17 +2,27 @@
 name = "enigma-node-client"
 version = "0.0.1"
 edition = "2021"
-authors = ["Sébastien TOUILLEUX (Gladius33)"]
 license = "MIT"
-description = "Stub node client"
-repository = "https://github.com/gladius33/enigma-messenger"
-homepage = "https://github.com/gladius33/enigma-messenger"
+authors = ["Sébastien TOUILLEUX (Gladius33)"]
+description = "HTTP client for Enigma node services (registry/resolve/announce/sync/nodes) using canonical enigma-node-types."
+repository = "https://github.com/Gladius33/enigma-node-client"
+homepage = "https://github.com/Gladius33/enigma-node-client"
+documentation = "https://docs.rs/enigma-node-client"
+readme = "README.md"
+keywords = ["client", "registry", "directory", "presence", "enigma"]
+categories = ["network-programming"]
+rust-version = "1.75"
+include = ["src/**", "docs/**", "README.md", "LICENSE", "Cargo.toml", ".gitignore"]
 
 [dependencies]
-serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
-thiserror = { workspace = true }
-tokio = { workspace = true }
-uuid = { workspace = true }
-enigma-node-types = { path = "../enigma-node-types" }
-async-trait = { workspace = true }
+thiserror = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+uuid = { version = "1", features = ["serde", "v4"] }
+
+enigma-node-types = { path = "../enigma-node-types", version = "0.0.1" }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }

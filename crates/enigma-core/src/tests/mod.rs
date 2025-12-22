@@ -1,5 +1,6 @@
 pub mod attachments_tests;
 pub mod directory_tests;
+pub mod envelope_tests;
 pub mod groups_channels_tests;
 pub mod hybrid_fallback_tests;
 pub mod identity_tests;
