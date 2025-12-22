@@ -14,6 +14,10 @@ categories = ["network-programming"]
 rust-version = "1.75"
 include = ["src/**", "docs/**", "README.md", "LICENSE", "Cargo.toml", ".gitignore"]
 
+[features]
+default = []
+registry-tests = []
+
 [dependencies]
 thiserror = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
