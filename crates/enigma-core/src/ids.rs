@@ -15,7 +15,9 @@ pub struct ConversationId {
     pub value: String,
 }
 
-pub type DeviceId = Uuid;
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeviceId(pub Uuid);
 
 impl UserId {
     pub fn from_bytes(bytes: [u8; 32]) -> Self {
@@ -63,6 +65,20 @@ impl Display for UserId {
 impl ConversationId {
     pub fn new(value: String) -> Self {
         Self { value }
+    }
+}
+
+impl DeviceId {
+    pub fn new(id: Uuid) -> Self {
+        Self(id)
+    }
+
+    pub fn nil() -> Self {
+        Self(Uuid::nil())
+    }
+
+    pub fn as_uuid(&self) -> Uuid {
+        self.0
     }
 }
 

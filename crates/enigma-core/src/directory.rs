@@ -1,5 +1,6 @@
 use crate::error::CoreError;
 use crate::identity::LocalIdentity;
+use crate::ids::DeviceId;
 use enigma_node_types::PublicIdentity;
 use enigma_storage::EncryptedStore;
 use serde::{Deserialize, Serialize};
@@ -8,12 +9,21 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeviceInfo {
+    pub device_id: DeviceId,
+    pub last_seen_ms: u64,
+    pub hints: Option<serde_json::Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Contact {
     pub handle: String,
     pub user_id: String,
     pub alias: Option<String>,
     pub added_at_ms: u64,
     pub last_resolved_ms: u64,
+    #[serde(default)]
+    pub devices: Vec<DeviceInfo>,
 }
 
 #[async_trait::async_trait]
@@ -48,6 +58,7 @@ impl ContactDirectory {
             alias: alias.clone(),
             added_at_ms: now_ms,
             last_resolved_ms: now_ms,
+            devices: Vec::new(),
         });
         contact.user_id = user_id.to_string();
         if alias.is_some() {
@@ -110,6 +121,28 @@ impl ContactDirectory {
         self.index(&mut guard).map(|i| i.len()).unwrap_or(0)
     }
 
+    pub async fn get_devices(&self, user_id: &str) -> Vec<DeviceInfo> {
+        let guard = self.store.lock().await;
+        guard
+            .get(&Self::devices_key(user_id))
+            .ok()
+            .flatten()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default()
+    }
+
+    pub async fn set_devices(
+        &self,
+        user_id: &str,
+        devices: Vec<DeviceInfo>,
+    ) -> Result<(), CoreError> {
+        let guard = self.store.lock().await;
+        let bytes = serde_json::to_vec(&devices).map_err(|_| CoreError::Storage)?;
+        guard
+            .put(&Self::devices_key(user_id), &bytes)
+            .map_err(|_| CoreError::Storage)
+    }
+
     fn index(&self, store: &mut EncryptedStore) -> Result<HashSet<String>, CoreError> {
         if let Ok(Some(bytes)) = store.get("dir:index") {
             serde_json::from_slice(&bytes).map_err(|_| CoreError::Storage)
@@ -151,6 +184,10 @@ impl ContactDirectory {
 
     fn uid_key(user_id: &str) -> String {
         format!("dir:uid:{}", user_id)
+    }
+
+    fn devices_key(user_id: &str) -> String {
+        format!("dir:devices:{}", user_id)
     }
 }
 

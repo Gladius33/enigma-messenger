@@ -6,6 +6,7 @@ pub mod identity_tests;
 #[cfg(feature = "dev")]
 pub mod introspection_tests;
 pub mod messaging_tests;
+pub mod multidevice_tests;
 pub mod negative_tests;
 pub mod offline_relay_tests;
 pub mod outbox_retry_tests;
@@ -60,5 +61,12 @@ pub fn recipient_user(user: &str) -> OutgoingRecipient {
     OutgoingRecipient {
         recipient_user_id: Some(user.to_string()),
         recipient_handle: None,
+    }
+}
+
+pub fn recipient_handle(handle: &str) -> OutgoingRecipient {
+    OutgoingRecipient {
+        recipient_user_id: None,
+        recipient_handle: Some(handle.to_string()),
     }
 }

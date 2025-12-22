@@ -14,6 +14,7 @@ pub mod outbox;
 pub mod packet;
 pub mod policy;
 pub mod ratchet;
+pub mod receipts;
 pub mod relay;
 pub mod session;
 pub mod sync;
@@ -42,7 +43,7 @@ use error::CoreError;
 use event::{EventBus, EventReceiver};
 use groups::{GroupState, NullGroupCryptoProvider};
 use identity::LocalIdentity;
-use ids::{conversation_id_for_dm, ConversationId, UserId};
+use ids::{conversation_id_for_dm, ConversationId, DeviceId, UserId};
 use messaging::{MockTransport, Transport};
 use node::{DirectoryResolver, NodeDirectoryResolver};
 use outbox::{Outbox, OutboxItem};
@@ -50,6 +51,7 @@ use packet::{
     build_frame, decode_frame, deserialize_envelope, serialize_envelope, PlainMessage, WireEnvelope,
 };
 use policy::Policy;
+use receipts::ReceiptStore;
 use relay::{RelayClient, RelayGateway};
 use session::SessionManager;
 use std::collections::HashMap;
@@ -75,6 +77,7 @@ pub struct Core {
     transport: Arc<dyn Transport>,
     resolver: Arc<dyn DirectoryResolver>,
     directory: ContactDirectory,
+    receipts: ReceiptStore,
     events: EventBus,
     groups: GroupState,
     channels: ChannelState,
@@ -99,8 +102,8 @@ impl Core {
         )
         .map_err(|_| CoreError::Storage)?;
         let identity = LocalIdentity::load_or_create(&store, config.device_name.clone())?;
-        let sessions = SessionManager::new(identity.user_id.clone());
         let store_arc = Arc::new(Mutex::new(store));
+        let sessions = SessionManager::new(identity.user_id.clone(), store_arc.clone());
         let directory = ContactDirectory::new(store_arc.clone());
         let resolver: Arc<dyn DirectoryResolver> =
             Arc::new(NodeDirectoryResolver::new(&config.node_base_urls));
@@ -117,6 +120,7 @@ impl Core {
             transport,
             resolver,
             directory,
+            receipts: ReceiptStore::new(store_arc.clone()),
             events: EventBus::new(256),
             groups: GroupState::new(policy.clone(), Arc::new(NullGroupCryptoProvider)),
             channels: ChannelState::new(policy.clone()),
@@ -187,10 +191,6 @@ impl Core {
             let recipient_hex = self.resolve_recipient(recipient).await?;
             let recipient_user = UserId::from_hex(&recipient_hex)
                 .ok_or(CoreError::Validation("recipient".to_string()))?;
-            let key = {
-                let mut sessions = self.sessions.lock().await;
-                sessions.next_key(&recipient_user)?
-            };
             let edited = request
                 .metadata
                 .as_ref()
@@ -203,61 +203,81 @@ impl Core {
                 .and_then(|m| m.get("deleted"))
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
-            let plain = PlainMessage {
-                conversation_id: request.conversation_id.value.clone(),
-                message_id: request.client_message_id.value,
-                sender: sender_hex.clone(),
-                kind: request.kind.clone(),
-                text: request.text.clone(),
-                attachment: request.attachment.clone(),
-                timestamp: now_ms(),
-                edited,
-                deleted,
-            };
-            let frame = build_frame(plain, &key)?;
-            let envelope = WireEnvelope::Message(frame);
-            let bytes = serialize_envelope(&envelope)?;
-            let outbox_id = Uuid::new_v4();
-            let item = OutboxItem {
-                id: outbox_id,
-                message_id: request.client_message_id.value.to_string(),
-                created_at_ms: now_ms(),
-                next_retry_ms: now_ms(),
-                tries: 0,
-                recipient_user_id: recipient_hex.clone(),
-                conversation_id: request.conversation_id.value.clone(),
-                packet: bytes.clone(),
-            };
-            let _ = self.outbox.put(item).await;
-            let sent = self.send_outbox_item_bytes(&recipient_hex, &bytes).await;
-            if sent.is_ok() {
-                let _ = self.outbox.mark_sent(&outbox_id).await;
+            let devices = self.recipient_devices(&recipient_hex).await?;
+            let target_devices: Vec<DeviceId> = if devices.is_empty() {
+                vec![DeviceId::nil()]
             } else {
-                let _ = self.outbox.bump_retry(&outbox_id, &self.policy).await;
-            }
-            if let Some(descriptor) = request.attachment.as_ref() {
-                if let Some(data) = request.attachment_bytes.as_ref() {
-                    let chunks = prepare_chunks(descriptor, data, &self.policy)?;
-                    for chunk in chunks {
-                        let chunk_env = WireEnvelope::Attachment(chunk);
-                        let payload = serialize_envelope(&chunk_env)?;
-                        let att_id = Uuid::new_v4();
-                        let att_item = OutboxItem {
-                            id: att_id,
-                            message_id: request.client_message_id.value.to_string(),
-                            created_at_ms: now_ms(),
-                            next_retry_ms: now_ms(),
-                            tries: 0,
-                            recipient_user_id: recipient_hex.clone(),
-                            conversation_id: request.conversation_id.value.clone(),
-                            packet: payload.clone(),
-                        };
-                        let _ = self.outbox.put(att_item).await;
-                        let att_sent = self.send_outbox_item_bytes(&recipient_hex, &payload).await;
-                        if att_sent.is_ok() {
-                            let _ = self.outbox.mark_sent(&att_id).await;
-                        } else {
-                            let _ = self.outbox.bump_retry(&att_id, &self.policy).await;
+                devices.clone()
+            };
+            for device_id in target_devices.iter() {
+                let key = {
+                    let mut sessions = self.sessions.lock().await;
+                    sessions.next_key(&recipient_user, device_id).await?
+                };
+                let plain = PlainMessage {
+                    conversation_id: request.conversation_id.value.clone(),
+                    message_id: request.client_message_id.value,
+                    sender: sender_hex.clone(),
+                    kind: request.kind.clone(),
+                    text: request.text.clone(),
+                    attachment: request.attachment.clone(),
+                    timestamp: now_ms(),
+                    edited,
+                    deleted,
+                };
+                let frame = build_frame(
+                    plain,
+                    &key,
+                    self.identity.device_id.clone(),
+                    device_id.clone(),
+                )?;
+                let envelope = WireEnvelope::Message(frame);
+                let bytes = serialize_envelope(&envelope)?;
+                let outbox_id = Uuid::new_v4();
+                let item = OutboxItem {
+                    id: outbox_id,
+                    message_id: request.client_message_id.value.to_string(),
+                    created_at_ms: now_ms(),
+                    next_retry_ms: now_ms(),
+                    tries: 0,
+                    recipient_user_id: recipient_hex.clone(),
+                    conversation_id: request.conversation_id.value.clone(),
+                    packet: bytes.clone(),
+                    recipient_device_id: Some(device_id.clone()),
+                };
+                let _ = self.outbox.put(item).await;
+                let sent = self.send_outbox_item_bytes(&recipient_hex, &bytes).await;
+                if sent.is_ok() {
+                    let _ = self.outbox.mark_sent(&outbox_id).await;
+                } else {
+                    let _ = self.outbox.bump_retry(&outbox_id, &self.policy).await;
+                }
+                if let Some(descriptor) = request.attachment.as_ref() {
+                    if let Some(data) = request.attachment_bytes.as_ref() {
+                        let chunks = prepare_chunks(descriptor, data, &self.policy)?;
+                        for chunk in chunks {
+                            let chunk_env = WireEnvelope::Attachment(chunk);
+                            let payload = serialize_envelope(&chunk_env)?;
+                            let att_id = Uuid::new_v4();
+                            let att_item = OutboxItem {
+                                id: att_id,
+                                message_id: request.client_message_id.value.to_string(),
+                                created_at_ms: now_ms(),
+                                next_retry_ms: now_ms(),
+                                tries: 0,
+                                recipient_user_id: recipient_hex.clone(),
+                                conversation_id: request.conversation_id.value.clone(),
+                                packet: payload.clone(),
+                                recipient_device_id: Some(device_id.clone()),
+                            };
+                            let _ = self.outbox.put(att_item).await;
+                            let att_sent =
+                                self.send_outbox_item_bytes(&recipient_hex, &payload).await;
+                            if att_sent.is_ok() {
+                                let _ = self.outbox.mark_sent(&att_id).await;
+                            } else {
+                                let _ = self.outbox.bump_retry(&att_id, &self.policy).await;
+                            }
                         }
                     }
                 }
@@ -359,8 +379,12 @@ impl Core {
             WireEnvelope::Message(frame) => {
                 if let Some(sender_hex) = parse_sender(&frame.associated_data) {
                     if let Some(sender_user) = UserId::from_hex(&sender_hex) {
+                        let sender_device = frame
+                            .target_device_id
+                            .map(DeviceId::new)
+                            .unwrap_or_else(DeviceId::nil);
                         let mut sessions = self.sessions.lock().await;
-                        let key = sessions.next_key(&sender_user)?;
+                        let key = sessions.next_key(&sender_user, &sender_device).await?;
                         let message = decode_frame(&frame, &key)?;
                         let event = IncomingMessageEvent {
                             message_id: MessageId {
@@ -381,7 +405,16 @@ impl Core {
                             edited: message.edited,
                             deleted: message.deleted,
                         };
+                        let event_clone = event.clone();
                         self.events.publish(event);
+                        let _ = self
+                            .receipts
+                            .mark_delivered(
+                                &event_clone.message_id.value,
+                                &self.identity.user_id.to_hex(),
+                                &self.identity.device_id,
+                            )
+                            .await;
                     }
                 }
             }
@@ -502,6 +535,21 @@ impl Core {
         Err(CoreError::Validation("recipient".to_string()))
     }
 
+    async fn recipient_devices(&self, user_id: &str) -> Result<Vec<DeviceId>, CoreError> {
+        let cached = self.directory.get_devices(user_id).await;
+        if !cached.is_empty() {
+            return Ok(cached.into_iter().map(|d| d.device_id).collect());
+        }
+        if self.policy.directory_refresh_on_send {
+            let devices = self.resolver.resolve_devices(user_id).await?;
+            if !devices.is_empty() {
+                let _ = self.directory.set_devices(user_id, devices.clone()).await;
+                return Ok(devices.into_iter().map(|d| d.device_id).collect());
+            }
+        }
+        Ok(Vec::new())
+    }
+
     pub async fn create_group(&self, name: String) -> Result<ConversationId, CoreError> {
         let owner = UserIdHex {
             value: self.identity.user_id.to_hex(),
@@ -548,6 +596,35 @@ impl Core {
 
     pub fn dm_conversation(&self, other: &UserId) -> ConversationId {
         conversation_id_for_dm(&self.identity.user_id, other)
+    }
+
+    #[cfg(test)]
+    pub async fn mark_device_delivered(
+        &self,
+        message_id: &Uuid,
+        user_id: &str,
+        device: DeviceId,
+    ) -> Result<(), CoreError> {
+        self.receipts
+            .mark_delivered(message_id, user_id, &device)
+            .await
+    }
+
+    #[cfg(test)]
+    pub async fn aggregated_delivered(
+        &self,
+        message_id: &Uuid,
+        user_id: &str,
+        devices: &[DeviceId],
+    ) -> bool {
+        self.receipts
+            .aggregated_delivered(
+                message_id,
+                user_id,
+                devices,
+                &self.policy.receipt_aggregation,
+            )
+            .await
     }
 }
 

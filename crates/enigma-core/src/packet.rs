@@ -1,5 +1,6 @@
 use crate::attachments::AttachmentChunk;
 use crate::error::CoreError;
+use crate::ids::DeviceId;
 use enigma_aead::AeadKey;
 use enigma_api::types::{AttachmentDescriptor, MessageKind};
 use serde::{Deserialize, Serialize};
@@ -34,9 +35,18 @@ pub struct MessageFrame {
     pub kind: String,
     pub ciphertext: Vec<u8>,
     pub associated_data: Vec<u8>,
+    #[serde(default)]
+    pub device_id: Option<Uuid>,
+    #[serde(default)]
+    pub target_device_id: Option<Uuid>,
 }
 
-pub fn build_frame(message: PlainMessage, key: &AeadKey) -> Result<MessageFrame, CoreError> {
+pub fn build_frame(
+    message: PlainMessage,
+    key: &AeadKey,
+    device_id: DeviceId,
+    target_device_id: DeviceId,
+) -> Result<MessageFrame, CoreError> {
     let associated = format!(
         "{}:{}:{}",
         message.conversation_id, message.message_id, message.sender
@@ -52,6 +62,8 @@ pub fn build_frame(message: PlainMessage, key: &AeadKey) -> Result<MessageFrame,
         kind: format_kind(&message.kind),
         ciphertext,
         associated_data: associated.as_bytes().to_vec(),
+        device_id: Some(device_id.as_uuid()),
+        target_device_id: Some(target_device_id.as_uuid()),
     })
 }
 

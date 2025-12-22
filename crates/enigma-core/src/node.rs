@@ -1,3 +1,4 @@
+use crate::directory::DeviceInfo;
 use crate::error::CoreError;
 use crate::time::now_ms;
 use async_trait::async_trait;
@@ -10,6 +11,9 @@ pub trait DirectoryResolver: Send + Sync {
     async fn resolve_handle(&self, handle: &str) -> Result<(String, PublicIdentity), CoreError>;
     async fn check_user(&self, handle: &str) -> Result<bool, CoreError>;
     async fn announce_presence(&self, identity: &PublicIdentity) -> Result<(), CoreError>;
+    async fn resolve_devices(&self, _user_id: &str) -> Result<Vec<DeviceInfo>, CoreError> {
+        Ok(Vec::new())
+    }
 }
 
 #[derive(Clone)]
@@ -89,6 +93,10 @@ impl DirectoryResolver for NodeDirectoryResolver {
                 .map_err(|e| CoreError::Transport(format!("{:?}", e)))?;
         }
         Ok(())
+    }
+
+    async fn resolve_devices(&self, _user_id: &str) -> Result<Vec<DeviceInfo>, CoreError> {
+        Ok(Vec::new())
     }
 }
 

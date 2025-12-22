@@ -1,8 +1,9 @@
 use crate::error::CoreError;
 use blake3::Hasher;
 use enigma_aead::AeadKey;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RatchetState {
     seed: [u8; 32],
     counter: u64,

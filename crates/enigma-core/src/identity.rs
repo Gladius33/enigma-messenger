@@ -36,7 +36,7 @@ impl LocalIdentity {
             let signing_public_key = user_id.as_bytes().to_vec();
             let stored_hint = stored.username_hint.clone();
             let identity = Self {
-                device_id: stored.device_id,
+                device_id: DeviceId::new(stored.device_id),
                 username_hint: stored_hint.clone(),
                 user_id,
                 public_identity: PublicIdentity {
@@ -66,7 +66,7 @@ impl LocalIdentity {
         let signing_public_key = user_hash.as_bytes().to_vec();
         let username_hint_clone = username_hint.clone();
         Self {
-            device_id,
+            device_id: DeviceId::new(device_id),
             username_hint,
             user_id,
             public_identity: PublicIdentity {
@@ -82,7 +82,7 @@ impl LocalIdentity {
 
     pub fn persist(&self, store: &EncryptedStore) -> Result<(), CoreError> {
         let stored = StoredIdentity {
-            device_id: self.device_id,
+            device_id: self.device_id.as_uuid(),
             username_hint: self.username_hint.clone(),
             user_id_hex: self.user_id.to_hex(),
         };

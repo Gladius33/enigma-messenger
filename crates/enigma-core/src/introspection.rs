@@ -1,7 +1,7 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoreStats {
     pub user_id_hex: String,
-    pub device_id: uuid::Uuid,
+    pub device_id: crate::ids::DeviceId,
     pub conversations: usize,
     pub groups: usize,
     pub channels: usize,
@@ -30,7 +30,7 @@ impl crate::Core {
         let directory_len = self.directory.len().await;
         CoreStats {
             user_id_hex: self.identity.user_id.to_hex(),
-            device_id: self.identity.device_id,
+            device_id: self.identity.device_id.clone(),
             conversations,
             groups,
             channels,

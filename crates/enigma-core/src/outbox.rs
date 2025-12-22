@@ -1,3 +1,4 @@
+use crate::ids::DeviceId;
 use crate::policy::Policy;
 use crate::time::now_ms;
 use enigma_storage::EncryptedStore;
@@ -18,6 +19,8 @@ pub struct OutboxItem {
     pub recipient_user_id: String,
     pub conversation_id: String,
     pub packet: Vec<u8>,
+    #[serde(default)]
+    pub recipient_device_id: Option<DeviceId>,
 }
 
 #[derive(Clone)]

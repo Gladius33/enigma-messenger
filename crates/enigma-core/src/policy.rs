@@ -2,6 +2,13 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+pub enum ReceiptAggregation {
+    Any,
+    All,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct Policy {
     pub max_text_bytes: usize,
     pub max_message_rate_per_minute: u32,
@@ -17,6 +24,7 @@ pub struct Policy {
     pub outbox_batch_send: usize,
     pub directory_ttl_secs: u64,
     pub directory_refresh_on_send: bool,
+    pub receipt_aggregation: ReceiptAggregation,
 }
 
 impl Default for Policy {
@@ -36,6 +44,7 @@ impl Default for Policy {
             outbox_batch_send: 32,
             directory_ttl_secs: 3600,
             directory_refresh_on_send: true,
+            receipt_aggregation: ReceiptAggregation::Any,
         }
     }
 }
