@@ -17,15 +17,8 @@ description = "Enigma messenger orchestrator workspace"
 edition = "2021"
 
 [patch.crates-io]
-enigma-node-types = { git = "https://github.com/Gladius33/enigma-node-types" }
-enigma-packet = { git = "https://github.com/Gladius33/enigma-packet" }
 enigma-storage = { git = "https://github.com/Gladius33/enigma-storage" }
-enigma-relay = { git = "https://github.com/Gladius33/enigma-relay" }
-enigma-node-client = { git = "https://github.com/Gladius33/enigma-node-client" }
-enigma-signaling = { git = "https://github.com/Gladius33/enigma-signaling" }
-enigma-transport-webrtc = { git = "https://github.com/Gladius33/enigma-transport-webrtc" }
-enigma-sfu = { git = "https://github.com/Gladius33/enigma-sfu" }
-enigma-aead = { git = "https://github.com/Gladius33/enigma-aead" }
+enigma-node-types = { git = "https://github.com/Gladius33/enigma-node-types" }
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
