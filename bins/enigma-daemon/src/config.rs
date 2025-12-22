@@ -12,6 +12,8 @@ pub struct EnigmaConfig {
     pub registry: RegistryConfig,
     pub relay: RelayConfig,
     pub transport: TransportConfig,
+    #[serde(default)]
+    pub sfu: SfuConfig,
     pub logging: LoggingConfig,
 }
 
@@ -47,6 +49,18 @@ pub struct WebRtcConfig {
 #[derive(Clone, Debug, Deserialize)]
 pub struct LoggingConfig {
     pub level: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct SfuConfig {
+    #[serde(default)]
+    pub enabled: bool,
+}
+
+impl Default for SfuConfig {
+    fn default() -> Self {
+        Self { enabled: false }
+    }
 }
 
 #[derive(Debug, Error)]
