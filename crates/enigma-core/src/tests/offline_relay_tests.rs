@@ -58,8 +58,8 @@ async fn relay_pull_and_ack_flow() {
     let event = rx_b.recv().await.expect("event");
     assert_eq!(event.text.as_deref(), Some("offline"));
     let remaining = relay
-        .pull(&core_b.local_identity().user_id.to_hex())
+        .pull(&core_b.local_identity().user_id.to_hex(), None)
         .await
         .expect("pull");
-    assert!(remaining.is_empty());
+    assert!(remaining.envelopes.is_empty());
 }

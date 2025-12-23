@@ -4,7 +4,7 @@ use crate::directory::InMemoryRegistry;
 use crate::error::CoreError;
 use crate::messaging::MockTransport;
 use crate::policy::Policy;
-use crate::relay::{InMemoryRelay, RelayClient};
+use crate::relay::{InMemoryRelay, RelayClient, RelayPullResult};
 use crate::Core;
 use async_trait::async_trait;
 use enigma_api::types::{
@@ -42,8 +42,12 @@ impl RelayClient for FlakyRelay {
         self.inner.push(envelope).await
     }
 
-    async fn pull(&self, recipient: &str) -> Result<Vec<RelayEnvelope>, CoreError> {
-        self.inner.pull(recipient).await
+    async fn pull(
+        &self,
+        recipient: &str,
+        cursor: Option<String>,
+    ) -> Result<RelayPullResult, CoreError> {
+        self.inner.pull(recipient, cursor).await
     }
 
     async fn ack(&self, recipient: &str, ids: &[uuid::Uuid]) -> Result<(), CoreError> {

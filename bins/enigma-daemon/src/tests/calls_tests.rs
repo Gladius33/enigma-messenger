@@ -38,7 +38,12 @@ async fn join_leave_updates_state_and_sfu_room_info() {
     )
     .await;
     assert_eq!(join.status(), StatusCode::CREATED);
-    let info = dispatch_request(state.clone(), addr, build_request("GET", "/sfu/rooms/test-room", None)).await;
+    let info = dispatch_request(
+        state.clone(),
+        addr,
+        build_request("GET", "/sfu/rooms/test-room", None),
+    )
+    .await;
     let body = collect_bytes(info.into_body()).await.unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     let participants = json["participants"].as_array().cloned().unwrap_or_default();
@@ -54,10 +59,18 @@ async fn join_leave_updates_state_and_sfu_room_info() {
     )
     .await;
     assert_eq!(leave.status(), StatusCode::OK);
-    let info_after = dispatch_request(state.clone(), addr, build_request("GET", "/sfu/rooms/test-room", None)).await;
+    let info_after = dispatch_request(
+        state.clone(),
+        addr,
+        build_request("GET", "/sfu/rooms/test-room", None),
+    )
+    .await;
     let body_after = collect_bytes(info_after.into_body()).await.unwrap();
     let json_after: serde_json::Value = serde_json::from_slice(&body_after).unwrap();
-    let participants_after = json_after["participants"].as_array().cloned().unwrap_or_default();
+    let participants_after = json_after["participants"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     assert!(participants_after.is_empty());
     let _ = tx.send(());
     let _ = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;
@@ -141,8 +154,14 @@ async fn ice_candidates_are_stored_and_retrievable() {
     .await;
     let body = collect_bytes(signaling.into_body()).await.unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(json["signaling"]["ice_local"].as_array().map(|a| a.len()), Some(1));
-    assert_eq!(json["signaling"]["ice_remote"].as_array().map(|a| a.len()), Some(1));
+    assert_eq!(
+        json["signaling"]["ice_local"].as_array().map(|a| a.len()),
+        Some(1)
+    );
+    assert_eq!(
+        json["signaling"]["ice_remote"].as_array().map(|a| a.len()),
+        Some(1)
+    );
     let _ = tx.send(());
     let _ = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;
 }

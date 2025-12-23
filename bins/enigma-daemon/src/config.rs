@@ -27,14 +27,28 @@ pub struct IdentityConfig {
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct RegistryConfig {
+    #[serde(default = "default_enabled")]
     pub enabled: bool,
-    pub endpoints: Vec<String>,
+    pub base_url: String,
+    #[serde(default)]
+    pub mode: EndpointMode,
+    #[serde(default)]
+    pub tls: Option<TlsConfig>,
+    #[serde(default)]
+    pub pow: PowConfig,
+    #[serde(default)]
+    pub pepper_hex: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct RelayConfig {
+    #[serde(default = "default_enabled")]
     pub enabled: bool,
-    pub endpoint: Option<String>,
+    pub base_url: Option<String>,
+    #[serde(default)]
+    pub mode: EndpointMode,
+    #[serde(default)]
+    pub tls: Option<TlsConfig>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -51,6 +65,31 @@ pub struct WebRtcConfig {
 #[derive(Clone, Debug, Deserialize)]
 pub struct LoggingConfig {
     pub level: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum EndpointMode {
+    Http,
+    Tls,
+}
+
+impl Default for EndpointMode {
+    fn default() -> Self {
+        EndpointMode::Http
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Default)]
+pub struct TlsConfig {
+    #[serde(default)]
+    pub ca_cert: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug, Deserialize, Default)]
+pub struct PowConfig {
+    #[serde(default)]
+    pub enabled: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -91,6 +130,10 @@ fn default_max_publish() -> u32 {
 
 fn default_max_subscriptions() -> u32 {
     16
+}
+
+fn default_enabled() -> bool {
+    true
 }
 
 #[derive(Debug, Error)]

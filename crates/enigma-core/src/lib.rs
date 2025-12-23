@@ -6,6 +6,8 @@ pub mod envelope_crypto;
 pub mod error;
 pub mod event;
 pub mod extensions;
+#[cfg(feature = "sender-keys")]
+pub mod group_crypto;
 pub mod groups;
 pub mod identity;
 pub mod ids;
@@ -14,8 +16,6 @@ pub mod node;
 pub mod outbox;
 pub mod packet;
 pub mod policy;
-#[cfg(feature = "sender-keys")]
-pub mod group_crypto;
 pub mod ratchet;
 pub mod receipts;
 pub mod relay;
@@ -48,11 +48,11 @@ use groups::{GroupState, NullGroupCryptoProvider};
 use identity::LocalIdentity;
 use ids::{conversation_id_for_dm, ConversationId, DeviceId, UserId};
 use messaging::{MockTransport, Transport};
-use node::{DirectoryResolver, NodeDirectoryResolver};
+use node::{DirectoryResolver, RegistryDirectoryResolver};
 use outbox::{Outbox, OutboxItem};
 use packet::{
-    build_frame, decode_frame, deserialize_envelope, serialize_envelope, MessageFrame, PlainMessage,
-    WireEnvelope,
+    build_frame, decode_frame, deserialize_envelope, serialize_envelope, MessageFrame,
+    PlainMessage, WireEnvelope,
 };
 use policy::Policy;
 use receipts::ReceiptStore;
@@ -118,12 +118,13 @@ impl Core {
             key_provider.as_ref(),
         )
         .map_err(|_| CoreError::Storage)?;
-        let identity = LocalIdentity::load_or_create(&store, config.device_name.clone())?;
+        let identity = LocalIdentity::load_or_create(&store, config.user_handle.clone())?;
         let store_arc = Arc::new(Mutex::new(store));
         let sessions = SessionManager::new(identity.user_id.clone(), store_arc.clone());
         let directory = ContactDirectory::new(store_arc.clone());
+        let pepper = registry.envelope_pepper().ok_or(CoreError::Crypto)?;
         let resolver: Arc<dyn DirectoryResolver> =
-            Arc::new(NodeDirectoryResolver::new(&config.node_base_urls));
+            Arc::new(RegistryDirectoryResolver::new(registry.clone(), pepper));
         let core = Self {
             config: config.clone(),
             policy: policy.clone(),
@@ -343,9 +344,8 @@ impl Core {
             state = rotate_sender_state(self.store.clone(), &state, now, fingerprint).await?;
         }
         if state.msg_index >= self.policy.sender_keys_rotate_every_msgs {
-            state =
-                rotate_sender_state(self.store.clone(), &state, now, state.members_fingerprint)
-                    .await?;
+            state = rotate_sender_state(self.store.clone(), &state, now, state.members_fingerprint)
+                .await?;
         }
         let dist_payload = build_distribution_payload(&state);
         let mut targets = Vec::new();
@@ -523,8 +523,7 @@ impl Core {
                                 recipient_device_id: Some(device.clone()),
                             };
                             let _ = self.outbox.put(att_item).await;
-                            let att_sent =
-                                self.send_outbox_item_bytes(user_id, &payload).await;
+                            let att_sent = self.send_outbox_item_bytes(user_id, &payload).await;
                             if att_sent.is_ok() {
                                 let _ = self.outbox.mark_sent(&att_id).await;
                             } else {
@@ -731,12 +730,7 @@ impl Core {
             .ok_or(CoreError::Validation("sender".to_string()))?;
         let sender_key_id = frame.group_sender_key_id.ok_or(CoreError::Crypto)?;
         let msg_index = frame.group_msg_index.unwrap_or(0);
-        let state = load_state(
-            self.store.clone(),
-            &frame.conversation_id,
-            &sender_hex,
-        )
-        .await?;
+        let state = load_state(self.store.clone(), &frame.conversation_id, &sender_hex).await?;
         let Some(state) = state else {
             store_pending_message(
                 self.store.clone(),

@@ -2,9 +2,9 @@ use super::{base_config, key_provider, recipient_user, temp_path};
 use crate::config::TransportMode;
 use crate::directory::{DeviceInfo, InMemoryRegistry};
 use crate::ids::DeviceId;
-use crate::packet::{deserialize_envelope, WireEnvelope};
 use crate::messaging::MockTransport;
 use crate::node::DirectoryResolver;
+use crate::packet::{deserialize_envelope, WireEnvelope};
 use crate::policy::{GroupCryptoMode, Policy};
 use crate::relay::InMemoryRelay;
 use crate::time::now_ms;
@@ -33,7 +33,10 @@ impl MockResolver {
 
 #[async_trait]
 impl DirectoryResolver for MockResolver {
-    async fn resolve_handle(&self, handle: &str) -> Result<(String, PublicIdentity), crate::error::CoreError> {
+    async fn resolve_handle(
+        &self,
+        handle: &str,
+    ) -> Result<(String, PublicIdentity), crate::error::CoreError> {
         let username = handle.trim().trim_start_matches('@');
         let user_id = NodeUserId::from_username(username)
             .map_err(|_| crate::error::CoreError::Validation("handle".to_string()))?;
@@ -52,7 +55,10 @@ impl DirectoryResolver for MockResolver {
         Ok(true)
     }
 
-    async fn announce_presence(&self, _identity: &PublicIdentity) -> Result<(), crate::error::CoreError> {
+    async fn announce_presence(
+        &self,
+        _identity: &PublicIdentity,
+    ) -> Result<(), crate::error::CoreError> {
         Ok(())
     }
 
@@ -78,9 +84,7 @@ fn devices(count: usize) -> Vec<DeviceId> {
 
 fn member_id(username: &str) -> UserIdHex {
     UserIdHex {
-        value: NodeUserId::from_username(username)
-            .expect("user")
-            .to_hex(),
+        value: NodeUserId::from_username(username).expect("user").to_hex(),
     }
 }
 
@@ -105,10 +109,7 @@ async fn sender_keys_distribution_and_single_ciphertext() {
     .await
     .expect("core");
     core.set_resolver(resolver);
-    let group_id = core
-        .create_group("team".to_string())
-        .await
-        .expect("group");
+    let group_id = core.create_group("team".to_string()).await.expect("group");
     let member_a = member_id("alice");
     let member_b = member_id("bob");
     core.add_group_member(&group_id, member_a.clone())
@@ -179,10 +180,7 @@ async fn rotate_on_membership_change() {
     .await
     .expect("core");
     core.set_resolver(resolver);
-    let group_id = core
-        .create_group("crew".to_string())
-        .await
-        .expect("group");
+    let group_id = core.create_group("crew".to_string()).await.expect("group");
     let member_a = member_id("alice");
     let member_b = member_id("bob");
     core.add_group_member(&group_id, member_a.clone())
@@ -214,12 +212,12 @@ async fn rotate_on_membership_change() {
         .iter()
         .filter_map(|item| {
             deserialize_envelope(&item.packet).ok().and_then(|env| {
-                    if let WireEnvelope::Message(frame) = env {
-                        frame.group_sender_key_id
-                    } else {
-                        None
-                    }
-                })
+                if let WireEnvelope::Message(frame) = env {
+                    frame.group_sender_key_id
+                } else {
+                    None
+                }
+            })
         })
         .next()
         .expect("sender key id");
@@ -344,7 +342,10 @@ async fn pending_when_key_missing_then_reprocess() {
     let mut rx = recipient.subscribe();
     let group_bytes = group_packet.expect("group packet");
     let dist_bytes = dist_packet.expect("distribution");
-    assert!(recipient.inject_incoming(group_bytes.clone()).await.is_err());
+    assert!(recipient
+        .inject_incoming(group_bytes.clone())
+        .await
+        .is_err());
     assert!(rx.try_recv().is_err());
     recipient
         .inject_incoming(dist_bytes.clone())

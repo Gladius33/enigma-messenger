@@ -48,7 +48,10 @@ impl CallManager {
 
     #[allow(dead_code)]
     pub fn ensure_room(&self, room_id: RoomId, now_ms: u64) -> CallManagerResult<CallRoomState> {
-        let mut rooms = self.rooms.write().map_err(|_| CallManagerError::StateUnavailable)?;
+        let mut rooms = self
+            .rooms
+            .write()
+            .map_err(|_| CallManagerError::StateUnavailable)?;
         let room = rooms
             .entry(room_id.clone())
             .or_insert_with(|| CallRoomState {
@@ -68,7 +71,10 @@ impl CallManager {
         role: CallRole,
         now_ms: u64,
     ) -> CallManagerResult<CallParticipantState> {
-        let rooms_read = self.rooms.read().map_err(|_| CallManagerError::StateUnavailable)?;
+        let rooms_read = self
+            .rooms
+            .read()
+            .map_err(|_| CallManagerError::StateUnavailable)?;
         if let Some(room) = rooms_read.get(&room_id) {
             if room.participants.contains_key(&participant_id) {
                 return Err(CallManagerError::ParticipantExists);
@@ -81,12 +87,17 @@ impl CallManager {
         };
         sfu.join(room_id.clone(), participant_id.clone(), meta, now_ms)
             .map_err(CallManagerError::SfuError)?;
-        let mut rooms = self.rooms.write().map_err(|_| CallManagerError::StateUnavailable)?;
-        let room = rooms.entry(room_id.clone()).or_insert_with(|| CallRoomState {
-            room_id: CallRoomId::new(room_id.clone()),
-            participants: HashMap::new(),
-            created_at_ms: now_ms,
-        });
+        let mut rooms = self
+            .rooms
+            .write()
+            .map_err(|_| CallManagerError::StateUnavailable)?;
+        let room = rooms
+            .entry(room_id.clone())
+            .or_insert_with(|| CallRoomState {
+                room_id: CallRoomId::new(room_id.clone()),
+                participants: HashMap::new(),
+                created_at_ms: now_ms,
+            });
         if room.participants.contains_key(&participant_id) {
             return Err(CallManagerError::ParticipantExists);
         }
@@ -109,8 +120,13 @@ impl CallManager {
         room_id: RoomId,
         participant_id: ParticipantId,
     ) -> CallManagerResult<()> {
-        let mut rooms = self.rooms.write().map_err(|_| CallManagerError::StateUnavailable)?;
-        let room = rooms.get_mut(&room_id).ok_or(CallManagerError::RoomNotFound)?;
+        let mut rooms = self
+            .rooms
+            .write()
+            .map_err(|_| CallManagerError::StateUnavailable)?;
+        let room = rooms
+            .get_mut(&room_id)
+            .ok_or(CallManagerError::RoomNotFound)?;
         if !room.participants.contains_key(&participant_id) {
             return Err(CallManagerError::ParticipantNotFound);
         }
@@ -130,8 +146,13 @@ impl CallManager {
         sdp: String,
         now_ms: u64,
     ) -> CallManagerResult<SignalingRecord> {
-        let mut rooms = self.rooms.write().map_err(|_| CallManagerError::StateUnavailable)?;
-        let room = rooms.get_mut(&room_id).ok_or(CallManagerError::RoomNotFound)?;
+        let mut rooms = self
+            .rooms
+            .write()
+            .map_err(|_| CallManagerError::StateUnavailable)?;
+        let room = rooms
+            .get_mut(&room_id)
+            .ok_or(CallManagerError::RoomNotFound)?;
         let participant = room
             .participants
             .get_mut(&participant_id)
@@ -148,8 +169,13 @@ impl CallManager {
         sdp: String,
         now_ms: u64,
     ) -> CallManagerResult<SignalingRecord> {
-        let mut rooms = self.rooms.write().map_err(|_| CallManagerError::StateUnavailable)?;
-        let room = rooms.get_mut(&room_id).ok_or(CallManagerError::RoomNotFound)?;
+        let mut rooms = self
+            .rooms
+            .write()
+            .map_err(|_| CallManagerError::StateUnavailable)?;
+        let room = rooms
+            .get_mut(&room_id)
+            .ok_or(CallManagerError::RoomNotFound)?;
         let participant = room
             .participants
             .get_mut(&participant_id)
@@ -167,8 +193,13 @@ impl CallManager {
         direction: IceDirection,
         now_ms: u64,
     ) -> CallManagerResult<SignalingRecord> {
-        let mut rooms = self.rooms.write().map_err(|_| CallManagerError::StateUnavailable)?;
-        let room = rooms.get_mut(&room_id).ok_or(CallManagerError::RoomNotFound)?;
+        let mut rooms = self
+            .rooms
+            .write()
+            .map_err(|_| CallManagerError::StateUnavailable)?;
+        let room = rooms
+            .get_mut(&room_id)
+            .ok_or(CallManagerError::RoomNotFound)?;
         let participant = room
             .participants
             .get_mut(&participant_id)
@@ -186,7 +217,10 @@ impl CallManager {
         room_id: RoomId,
         participant_id: ParticipantId,
     ) -> CallManagerResult<SignalingRecord> {
-        let rooms = self.rooms.read().map_err(|_| CallManagerError::StateUnavailable)?;
+        let rooms = self
+            .rooms
+            .read()
+            .map_err(|_| CallManagerError::StateUnavailable)?;
         let room = rooms.get(&room_id).ok_or(CallManagerError::RoomNotFound)?;
         let participant = room
             .participants
@@ -196,7 +230,10 @@ impl CallManager {
     }
 
     pub fn room_state(&self, room_id: RoomId) -> CallManagerResult<CallRoomState> {
-        let rooms = self.rooms.read().map_err(|_| CallManagerError::StateUnavailable)?;
+        let rooms = self
+            .rooms
+            .read()
+            .map_err(|_| CallManagerError::StateUnavailable)?;
         let room = rooms.get(&room_id).ok_or(CallManagerError::RoomNotFound)?;
         Ok(room.clone())
     }

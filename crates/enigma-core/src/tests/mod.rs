@@ -43,6 +43,7 @@ pub fn base_config(path: String, mode: TransportMode) -> CoreConfig {
     CoreConfig {
         storage_path: path,
         namespace: "test".to_string(),
+        user_handle: format!("user-{}", Uuid::new_v4()),
         node_base_urls: Vec::new(),
         relay_base_urls: Vec::new(),
         device_name: None,

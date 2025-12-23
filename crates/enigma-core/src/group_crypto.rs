@@ -147,7 +147,8 @@ pub async fn load_state(
     let key = state_key(group_id, sender_user_id);
     let guard = store.lock().await;
     if let Some(bytes) = guard.get(&key).map_err(|_| CoreError::Storage)? {
-        let state: SenderKeyState = serde_json::from_slice(&bytes).map_err(|_| CoreError::Storage)?;
+        let state: SenderKeyState =
+            serde_json::from_slice(&bytes).map_err(|_| CoreError::Storage)?;
         return Ok(Some(state));
     }
     Ok(None)
@@ -237,7 +238,8 @@ pub fn build_distribution_payload(state: &SenderKeyState) -> Vec<u8> {
 }
 
 pub fn parse_distribution_payload(bytes: &[u8]) -> Result<SenderKeyState, CoreError> {
-    let mut state: SenderKeyState = serde_json::from_slice(bytes).map_err(|_| CoreError::Storage)?;
+    let mut state: SenderKeyState =
+        serde_json::from_slice(bytes).map_err(|_| CoreError::Storage)?;
     state.msg_index = 0;
     state.created_at_ms = now_ms();
     Ok(state)
@@ -288,15 +290,13 @@ pub fn decrypt_group_message(
 }
 
 fn pending_index_key(group_id: &str, sender: &str, sender_key_id: u32) -> String {
-    format!("gsk:pending:index:{}:{}:{}", group_id, sender, sender_key_id)
+    format!(
+        "gsk:pending:index:{}:{}:{}",
+        group_id, sender, sender_key_id
+    )
 }
 
-fn pending_item_key(
-    group_id: &str,
-    sender: &str,
-    sender_key_id: u32,
-    msg_index: u32,
-) -> String {
+fn pending_item_key(group_id: &str, sender: &str, sender_key_id: u32, msg_index: u32) -> String {
     format!(
         "gsk:pending:{}:{}:{}:{}",
         group_id, sender, sender_key_id, msg_index

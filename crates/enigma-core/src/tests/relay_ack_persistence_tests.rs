@@ -4,7 +4,7 @@ use crate::directory::InMemoryRegistry;
 use crate::error::CoreError;
 use crate::messaging::MockTransport;
 use crate::policy::Policy;
-use crate::relay::RelayClient;
+use crate::relay::{RelayClient, RelayPullResult};
 use crate::Core;
 use async_trait::async_trait;
 use enigma_api::types::{
@@ -45,8 +45,15 @@ impl RelayClient for TrackingRelay {
         Ok(())
     }
 
-    async fn pull(&self, recipient: &str) -> Result<Vec<RelayEnvelope>, CoreError> {
-        Ok(self.entries_for(recipient).await)
+    async fn pull(
+        &self,
+        recipient: &str,
+        _cursor: Option<String>,
+    ) -> Result<RelayPullResult, CoreError> {
+        Ok(RelayPullResult {
+            envelopes: self.entries_for(recipient).await,
+            cursor: None,
+        })
     }
 
     async fn ack(&self, recipient: &str, ids: &[Uuid]) -> Result<(), CoreError> {

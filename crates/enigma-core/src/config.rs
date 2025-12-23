@@ -19,6 +19,7 @@ impl Default for TransportMode {
 pub struct CoreConfig {
     pub storage_path: String,
     pub namespace: String,
+    pub user_handle: String,
     pub node_base_urls: Vec<String>,
     pub relay_base_urls: Vec<String>,
     pub device_name: Option<String>,
@@ -36,6 +37,7 @@ impl Default for CoreConfig {
         Self {
             storage_path: ".enigma".to_string(),
             namespace: "default".to_string(),
+            user_handle: "user".to_string(),
             node_base_urls: Vec::new(),
             relay_base_urls: Vec::new(),
             device_name: None,

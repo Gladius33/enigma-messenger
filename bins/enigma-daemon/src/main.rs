@@ -1,19 +1,24 @@
 mod calls;
+mod clients;
 mod config;
 mod sfu_adapter;
 
 use bytes::Bytes;
-use calls::{CallManager, CallManagerError, CallRole, CallRoomState, IceDirection, SignalingRecord};
+use calls::{
+    CallManager, CallManagerError, CallRole, CallRoomState, IceDirection, SignalingRecord,
+};
+use clients::{registry_http::RegistryHttpClient, relay_http::RelayHttpClient};
 use config::EnigmaConfig;
-use sfu_adapter::DaemonSfuAdapter;
 use enigma_core::config::{CoreConfig, TransportMode};
 use enigma_core::directory::InMemoryRegistry;
 use enigma_core::messaging::MockTransport;
 use enigma_core::relay::InMemoryRelay;
 use enigma_core::Core;
+use enigma_sfu::{
+    ParticipantId, ParticipantMeta, RoomId, Sfu, SfuError, TrackId, TrackKind, VecEventSink,
+};
 use enigma_storage::key_provider::{KeyProvider, MasterKey};
 use enigma_storage::EnigmaStorageError;
-use enigma_sfu::{ParticipantId, ParticipantMeta, RoomId, Sfu, SfuError, TrackId, TrackKind, VecEventSink};
 use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
 use hyper::header::CONTENT_TYPE;
@@ -24,6 +29,7 @@ use hyper_util::rt::TokioIo;
 use log::LevelFilter;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
+use sfu_adapter::DaemonSfuAdapter;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -128,30 +134,14 @@ fn init_logging(cfg: &EnigmaConfig) {
 async fn init_core(cfg: &EnigmaConfig) -> Result<Arc<Core>, DaemonError> {
     let data_dir = cfg.data_dir.clone();
     let storage_path = data_dir.join("core");
-    let registry_urls = if cfg.registry.enabled {
-        cfg.registry.endpoints.clone()
-    } else {
-        Vec::new()
-    };
-    let relay_urls = if cfg.relay.enabled {
-        cfg.relay
-            .endpoint
-            .clone()
-            .into_iter()
-            .collect::<Vec<_>>()
-    } else {
-        Vec::new()
-    };
     let namespace = format!("daemon-{}", cfg.identity.user_handle);
     let _ = cfg.transport.webrtc.stun_servers.len();
     let core_cfg = CoreConfig {
-        storage_path: storage_path
-            .to_str()
-            .unwrap_or(".enigma")
-            .to_string(),
+        storage_path: storage_path.to_str().unwrap_or(".enigma").to_string(),
         namespace,
-        node_base_urls: registry_urls,
-        relay_base_urls: relay_urls,
+        user_handle: cfg.identity.user_handle.clone(),
+        node_base_urls: Vec::new(),
+        relay_base_urls: cfg.relay.base_url.clone().into_iter().collect::<Vec<_>>(),
         device_name: cfg.identity.device_name.clone(),
         enable_read_receipts: true,
         enable_typing: true,
@@ -165,15 +155,27 @@ async fn init_core(cfg: &EnigmaConfig) -> Result<Arc<Core>, DaemonError> {
         },
         polling_interval_ms: 1000,
     };
-    let registry = Arc::new(InMemoryRegistry::new());
-    let relay = Arc::new(InMemoryRelay::new());
+    let registry_client: Arc<dyn enigma_core::directory::RegistryClient> = if cfg.registry.enabled {
+        Arc::new(RegistryHttpClient::new(&cfg.registry).map_err(|_| DaemonError::Core)?)
+    } else {
+        Arc::new(InMemoryRegistry::new())
+    };
+    let relay_client: Arc<dyn enigma_core::relay::RelayClient> = if cfg.relay.enabled {
+        if cfg.relay.base_url.is_some() {
+            Arc::new(RelayHttpClient::new(&cfg.relay).map_err(|_| DaemonError::Core)?)
+        } else {
+            Arc::new(InMemoryRelay::new())
+        }
+    } else {
+        Arc::new(InMemoryRelay::new())
+    };
     let transport: Arc<dyn enigma_core::messaging::Transport> = Arc::new(MockTransport::new());
     Core::init(
         core_cfg,
         cfg.policy.clone(),
         Arc::new(DaemonKey),
-        registry,
-        relay,
+        registry_client,
+        relay_client,
         transport,
     )
     .await
@@ -201,7 +203,10 @@ fn init_sfu(cfg: &EnigmaConfig) -> (Option<Arc<Sfu>>, Option<Arc<DaemonSfuAdapte
     (None, None)
 }
 
-async fn start_control_server(state: DaemonState, shutdown: oneshot::Receiver<()>) -> Result<(Option<SocketAddr>, JoinHandle<()>), DaemonError> {
+async fn start_control_server(
+    state: DaemonState,
+    shutdown: oneshot::Receiver<()>,
+) -> Result<(Option<SocketAddr>, JoinHandle<()>), DaemonError> {
     let addr = SocketAddr::from(([127, 0, 0, 1], 0));
     let listener = match TcpListener::bind(addr).await {
         Ok(l) => l,
@@ -242,7 +247,10 @@ async fn start_control_server(state: DaemonState, shutdown: oneshot::Receiver<()
     Ok((local_addr, handle))
 }
 
-async fn handle_request(state: DaemonState, req: Request<Incoming>) -> Result<Response<Full<Bytes>>, hyper::Error> {
+async fn handle_request(
+    state: DaemonState,
+    req: Request<Incoming>,
+) -> Result<Response<Full<Bytes>>, hyper::Error> {
     if req.method().as_str() == "GET" && req.uri().path() == "/health" {
         return Ok(Response::new(Full::from(
             serde_json::json!({"status":"ok"}).to_string(),
@@ -500,7 +508,10 @@ async fn handle_sfu_request(
             return Ok(method_not_allowed_response());
         }
         let rooms = match sfu.list_rooms() {
-            Ok(list) => list.into_iter().map(|id| id.to_string()).collect::<Vec<_>>(),
+            Ok(list) => list
+                .into_iter()
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>(),
             Err(err) => return Ok(sfu_error_response(err)),
         };
         return Ok(json_response(
@@ -709,7 +720,9 @@ async fn collect_bytes(body: Incoming) -> Result<Bytes, hyper::Error> {
     Ok(collected.to_bytes())
 }
 
-async fn parse_body<T: DeserializeOwned>(body: Incoming) -> Result<Result<T, Response<Full<Bytes>>>, hyper::Error> {
+async fn parse_body<T: DeserializeOwned>(
+    body: Incoming,
+) -> Result<Result<T, Response<Full<Bytes>>>, hyper::Error> {
     let bytes = collect_bytes(body).await?;
     if bytes.is_empty() {
         return Ok(Err(json_response(

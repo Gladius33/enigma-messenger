@@ -1,7 +1,6 @@
 use crate::error::CoreError;
 use crate::ids::{DeviceId, UserId};
 use crate::time::now_ms;
-use blake3::Hasher;
 use enigma_node_types::{PublicIdentity, UserId as NodeUserId};
 use enigma_storage::EncryptedStore;
 use serde::{Deserialize, Serialize};
@@ -23,10 +22,7 @@ struct StoredIdentity {
 }
 
 impl LocalIdentity {
-    pub fn load_or_create(
-        store: &EncryptedStore,
-        username_hint: Option<String>,
-    ) -> Result<Self, CoreError> {
+    pub fn load_or_create(store: &EncryptedStore, user_handle: String) -> Result<Self, CoreError> {
         if let Some(bytes) = store.get("identity").map_err(|_| CoreError::Storage)? {
             let stored: StoredIdentity =
                 serde_json::from_slice(&bytes).map_err(|_| CoreError::Storage)?;
@@ -50,34 +46,34 @@ impl LocalIdentity {
             };
             return Ok(identity);
         }
-        let identity = Self::create(username_hint);
+        let identity = Self::create(user_handle)?;
         identity.persist(store)?;
         Ok(identity)
     }
 
-    fn create(username_hint: Option<String>) -> Self {
+    fn create(user_handle: String) -> Result<Self, CoreError> {
         let device_id = Uuid::new_v4();
-        let mut hasher = Hasher::new();
-        hasher.update(device_id.as_bytes());
-        let user_hash = hasher.finalize();
-        let user_id = UserId::from_bytes(*user_hash.as_bytes());
-        let user_hex = user_id.to_hex();
-        let node_user = NodeUserId::from_hex(&user_hex).expect("valid user id");
-        let signing_public_key = user_hash.as_bytes().to_vec();
-        let username_hint_clone = username_hint.clone();
-        Self {
+        let normalized = enigma_node_types::normalize_username(&user_handle)
+            .map_err(|_| CoreError::Validation("handle".to_string()))?;
+        let node_user = NodeUserId::from_username(&normalized)
+            .map_err(|_| CoreError::Validation("handle".to_string()))?;
+        let user_hex = node_user.to_hex();
+        let user_id =
+            UserId::from_hex(&user_hex).ok_or(CoreError::Validation("handle".to_string()))?;
+        let signing_public_key = node_user.as_bytes().to_vec();
+        Ok(Self {
             device_id: DeviceId::new(device_id),
-            username_hint,
+            username_hint: Some(normalized.clone()),
             user_id,
             public_identity: PublicIdentity {
                 user_id: node_user,
-                username_hint: username_hint_clone,
+                username_hint: Some(normalized),
                 signing_public_key: signing_public_key.clone(),
                 encryption_public_key: signing_public_key.clone(),
                 signature: signing_public_key,
                 created_at_ms: now_ms(),
             },
-        }
+        })
     }
 
     pub fn persist(&self, store: &EncryptedStore) -> Result<(), CoreError> {
