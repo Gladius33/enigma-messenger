@@ -60,7 +60,7 @@ pub fn validate_message_request(
                 return Err(ValidationError::InvalidSize("recipient_handle"));
             }
             let len = handle.len();
-            if len < 2 || len > 64 {
+            if !(2..=64).contains(&len) {
                 return Err(ValidationError::InvalidSize("recipient_handle"));
             }
         }

@@ -33,6 +33,6 @@ ed25519-dalek = { version = "2", features = ["rand_core"] }
 chacha20poly1305 = "0.10"
 enigma-api = { path = "../enigma-api", version = "0.0.1" }
 enigma-node-types = { workspace = true }
-enigma-aead = { version = "0.1.1" }
+enigma-aead = { version = "=0.1.1" }
 enigma-storage = { workspace = true }
 enigma-node-registry = { workspace = true, default-features = false }

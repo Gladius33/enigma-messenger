@@ -28,5 +28,5 @@ hex = "0.4"
 enigma-sfu = "=0.2.0"
 enigma-relay = "=0.0.3"
 enigma-node-registry = { version = "=0.0.2", default-features = false }
-enigma-node-types = "0.0.1"
-enigma-storage = "0.0.1"
+enigma-node-types = "=0.0.1"
+enigma-storage = "=0.0.1"
