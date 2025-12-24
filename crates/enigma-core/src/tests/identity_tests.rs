@@ -12,11 +12,16 @@ async fn identity_persists_across_reload() {
     let path = temp_path("identity");
     let mut config = base_config(path.clone(), TransportMode::Hybrid);
     config.polling_interval_ms = 0;
-    let mut policy = Policy::default();
-    policy.outbox_batch_send = 0;
+
+    let policy = Policy {
+        outbox_batch_send: 0,
+        ..Policy::default()
+    };
+
     let registry = Arc::new(InMemoryRegistry::new());
     let relay = Arc::new(InMemoryRelay::new());
     let transport = MockTransport::new();
+
     let core_one = Core::init(
         config.clone(),
         policy.clone(),
@@ -27,8 +32,10 @@ async fn identity_persists_across_reload() {
     )
     .await
     .expect("init one");
+
     let identity_one = core_one.local_identity();
     drop(core_one);
+
     let core_two = Core::init(
         config,
         policy,
@@ -39,6 +46,7 @@ async fn identity_persists_across_reload() {
     )
     .await
     .expect("init two");
+
     let identity_two = core_two.local_identity();
     assert_eq!(identity_one.device_id, identity_two.device_id);
     assert_eq!(identity_one.user_id, identity_two.user_id);

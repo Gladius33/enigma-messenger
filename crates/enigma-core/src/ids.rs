@@ -33,7 +33,7 @@ impl UserId {
     }
 
     pub fn from_hex(hex_str: &str) -> Option<Self> {
-        if hex_str.len() % 2 != 0 {
+        if !hex_str.len().is_multiple_of(2) {
             return None;
         }
         let mut bytes = [0u8; 32];

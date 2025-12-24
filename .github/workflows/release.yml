@@ -1,0 +1,49 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo fmt
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: cargo test (workspace)
+        run: cargo test
+
+      - name: cargo test (workspace all features)
+        run: cargo test --all-features
+
+      - name: cargo build --release
+        run: cargo build --release
+
+      - name: cargo build --release --all-features
+        run: cargo build --release --all-features
+
+      - name: Upload enigma-daemon (linux)
+        uses: actions/upload-artifact@v4
+        with:
+          name: enigma-daemon-linux
+          path: target/release/enigma-daemon
+          if-no-files-found: error
+
+      - name: Upload enigma-cli (linux)
+        uses: actions/upload-artifact@v4
+        with:
+          name: enigma-cli-linux
+          path: target/release/enigma-cli
+          if-no-files-found: error

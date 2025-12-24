@@ -32,39 +32,22 @@ impl From<CallRoomId> for RoomId {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum CallRole {
     Publisher,
     Subscriber,
+    #[default]
     Both,
 }
 
-impl Default for CallRole {
-    fn default() -> Self {
-        CallRole::Both
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct SignalingRecord {
     pub offer_sdp: Option<String>,
     pub answer_sdp: Option<String>,
     pub ice_local: Vec<String>,
     pub ice_remote: Vec<String>,
     pub updated_at_ms: u64,
-}
-
-impl Default for SignalingRecord {
-    fn default() -> Self {
-        Self {
-            offer_sdp: None,
-            answer_sdp: None,
-            ice_local: Vec::new(),
-            ice_remote: Vec::new(),
-            updated_at_ms: 0,
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

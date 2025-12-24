@@ -2,10 +2,12 @@ use enigma_sfu::{ParticipantId, RoomId, SfuTransportAdapter, TrackId, TrackKind}
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
+type SubscriptionMap = HashMap<RoomId, HashMap<ParticipantId, HashSet<TrackId>>>;
+
 #[derive(Clone)]
 pub struct DaemonSfuAdapter {
     publishers: Arc<Mutex<HashMap<RoomId, HashMap<TrackId, PublishedTrack>>>>,
-    subscriptions: Arc<Mutex<HashMap<RoomId, HashMap<ParticipantId, HashSet<TrackId>>>>>,
+    subscriptions: Arc<Mutex<SubscriptionMap>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

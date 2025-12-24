@@ -7,3 +7,9 @@ impl SyncEngine {
 
     pub async fn tick(&self) {}
 }
+
+impl Default for SyncEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}

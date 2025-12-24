@@ -50,9 +50,11 @@ impl GroupState {
         if name.len() > self.policy.max_group_name_len {
             return Err(CoreError::Validation("group_name".to_string()));
         }
+
         let id = ApiConversationId {
             value: Uuid::new_v4().to_string(),
         };
+
         let dto = GroupDto {
             id,
             name,
@@ -61,6 +63,7 @@ impl GroupState {
                 role: GroupRole::Owner,
             }],
         };
+
         self.groups.lock().await.insert(
             dto.id.value.clone(),
             TrackedGroup {
@@ -68,6 +71,7 @@ impl GroupState {
                 updated_at_ms: now_ms(),
             },
         );
+
         self.crypto.distribute(&dto).await?;
         Ok(dto)
     }
@@ -79,9 +83,11 @@ impl GroupState {
     ) -> Result<(), CoreError> {
         let mut guard = self.groups.lock().await;
         let group = guard.get_mut(&id.value).ok_or(CoreError::NotFound)?;
+
         if group.dto.members.len() as u32 >= self.policy.max_membership_changes_per_minute {
             return Err(CoreError::Validation("membership_limit".to_string()));
         }
+
         if !group
             .dto
             .members
@@ -91,6 +97,7 @@ impl GroupState {
             group.dto.members.push(member);
             group.updated_at_ms = now_ms();
         }
+
         Ok(())
     }
 
@@ -101,11 +108,14 @@ impl GroupState {
     ) -> Result<(), CoreError> {
         let mut guard = self.groups.lock().await;
         let group = guard.get_mut(&id.value).ok_or(CoreError::NotFound)?;
+
         let before = group.dto.members.len();
         group.dto.members.retain(|m| &m.user_id != user_id);
+
         if group.dto.members.len() != before {
             group.updated_at_ms = now_ms();
         }
+
         Ok(())
     }
 
@@ -121,5 +131,9 @@ impl GroupState {
     pub async fn updated_at_ms(&self, id: &CoreConversationId) -> Option<u64> {
         let guard = self.groups.lock().await;
         guard.get(&id.value).map(|g| g.updated_at_ms)
+    }
+
+    pub async fn is_empty(&self) -> bool {
+        self.len().await == 0
     }
 }

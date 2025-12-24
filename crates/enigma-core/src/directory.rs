@@ -204,6 +204,9 @@ impl ContactDirectory {
     fn devices_key(user_id: &str) -> String {
         format!("dir:devices:{}", user_id)
     }
+    pub async fn is_empty(&self) -> bool {
+        self.len().await == 0
+    }
 }
 
 pub async fn register_identity(

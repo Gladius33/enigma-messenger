@@ -1,17 +1,12 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(deny_unknown_fields)]
 pub enum TransportMode {
     P2PWebRTC,
     RelayOnly,
+    #[default]
     Hybrid,
-}
-
-impl Default for TransportMode {
-    fn default() -> Self {
-        TransportMode::Hybrid
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

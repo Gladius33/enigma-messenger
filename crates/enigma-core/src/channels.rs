@@ -25,19 +25,23 @@ impl ChannelState {
         if name.len() > self.policy.max_channel_name_len {
             return Err(CoreError::Validation("channel_name".to_string()));
         }
+
         let id = ApiConversationId {
             value: Uuid::new_v4().to_string(),
         };
+
         let dto = ChannelDto {
             id,
             name,
             admins: vec![admin.clone()],
             subscribers: vec![admin],
         };
+
         self.channels
             .lock()
             .await
             .insert(dto.id.value.clone(), dto.clone());
+
         Ok(dto)
     }
 
@@ -61,6 +65,7 @@ impl ChannelState {
     ) -> Result<(), CoreError> {
         let mut guard = self.channels.lock().await;
         let channel = guard.get_mut(&id.value).ok_or(CoreError::NotFound)?;
+
         if !channel.admins.iter().any(|m| m == &user) {
             channel.admins.push(user.clone());
         }
@@ -85,5 +90,9 @@ impl ChannelState {
 
     pub async fn len(&self) -> usize {
         self.channels.lock().await.len()
+    }
+
+    pub async fn is_empty(&self) -> bool {
+        self.len().await == 0
     }
 }

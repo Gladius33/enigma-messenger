@@ -293,12 +293,12 @@ async fn handle_calls_request(
     };
     let path = req.uri().path().trim_start_matches('/');
     let segments: Vec<&str> = path.split('/').collect();
-    if segments.get(0) != Some(&"calls") || segments.len() < 3 {
+    if segments.first() != Some(&"calls") || segments.len() < 3 {
         return Ok(not_found_response());
     }
     let room_id = match parse_room_id(segments[1]) {
         Ok(id) => id,
-        Err(resp) => return Ok(resp),
+        Err(resp) => return Ok(*resp),
     };
     let action = segments[2];
     match action {
@@ -313,7 +313,7 @@ async fn handle_calls_request(
             };
             let participant_id = match parse_participant_id(&payload.participant_id) {
                 Ok(id) => id,
-                Err(resp) => return Ok(resp),
+                Err(resp) => return Ok(*resp),
             };
             let role = payload.role.unwrap_or_default();
             let res = state.call_manager.join_room(
@@ -324,7 +324,7 @@ async fn handle_calls_request(
                 role.clone(),
                 now_ms(),
             );
-            return Ok(match res {
+            Ok(match res {
                 Ok(participant) => json_response(
                     StatusCode::CREATED,
                     serde_json::json!({
@@ -335,7 +335,7 @@ async fn handle_calls_request(
                     }),
                 ),
                 Err(err) => call_error_response(err),
-            });
+            })
         }
         "leave" => {
             if req.method().as_str() != "POST" {
@@ -348,15 +348,15 @@ async fn handle_calls_request(
             };
             let participant_id = match parse_participant_id(&payload.participant_id) {
                 Ok(id) => id,
-                Err(resp) => return Ok(resp),
+                Err(resp) => return Ok(*resp),
             };
             let res = state
                 .call_manager
                 .leave_room(&sfu, room_id.clone(), participant_id);
-            return Ok(match res {
+            Ok(match res {
                 Ok(_) => json_response(StatusCode::OK, serde_json::json!({"status":"ok"})),
                 Err(err) => call_error_response(err),
-            });
+            })
         }
         "offer" => {
             if req.method().as_str() != "POST" {
@@ -369,7 +369,7 @@ async fn handle_calls_request(
             };
             let participant_id = match parse_participant_id(&payload.participant_id) {
                 Ok(id) => id,
-                Err(resp) => return Ok(resp),
+                Err(resp) => return Ok(*resp),
             };
             let res = state.call_manager.upsert_offer(
                 room_id.clone(),
@@ -377,7 +377,7 @@ async fn handle_calls_request(
                 payload.sdp,
                 now_ms(),
             );
-            return Ok(match res {
+            Ok(match res {
                 Ok(record) => json_response(
                     StatusCode::OK,
                     serde_json::json!({
@@ -387,7 +387,7 @@ async fn handle_calls_request(
                     }),
                 ),
                 Err(err) => call_error_response(err),
-            });
+            })
         }
         "answer" => {
             if req.method().as_str() != "POST" {
@@ -400,7 +400,7 @@ async fn handle_calls_request(
             };
             let participant_id = match parse_participant_id(&payload.participant_id) {
                 Ok(id) => id,
-                Err(resp) => return Ok(resp),
+                Err(resp) => return Ok(*resp),
             };
             let res = state.call_manager.upsert_answer(
                 room_id.clone(),
@@ -408,7 +408,7 @@ async fn handle_calls_request(
                 payload.sdp,
                 now_ms(),
             );
-            return Ok(match res {
+            Ok(match res {
                 Ok(record) => json_response(
                     StatusCode::OK,
                     serde_json::json!({
@@ -418,7 +418,7 @@ async fn handle_calls_request(
                     }),
                 ),
                 Err(err) => call_error_response(err),
-            });
+            })
         }
         "ice" => {
             if req.method().as_str() != "POST" {
@@ -431,11 +431,11 @@ async fn handle_calls_request(
             };
             let participant_id = match parse_participant_id(&payload.participant_id) {
                 Ok(id) => id,
-                Err(resp) => return Ok(resp),
+                Err(resp) => return Ok(*resp),
             };
             let direction = match parse_direction(&payload.direction) {
                 Ok(d) => d,
-                Err(resp) => return Ok(resp),
+                Err(resp) => return Ok(*resp),
             };
             let res = state.call_manager.add_ice(
                 room_id.clone(),
@@ -444,7 +444,7 @@ async fn handle_calls_request(
                 direction,
                 now_ms(),
             );
-            return Ok(match res {
+            Ok(match res {
                 Ok(record) => json_response(
                     StatusCode::OK,
                     serde_json::json!({
@@ -454,17 +454,17 @@ async fn handle_calls_request(
                     }),
                 ),
                 Err(err) => call_error_response(err),
-            });
+            })
         }
         "state" => {
             if req.method().as_str() != "GET" || segments.len() != 3 {
                 return Ok(method_not_allowed_response());
             }
             let res = state.call_manager.room_state(room_id.clone());
-            return Ok(match res {
+            Ok(match res {
                 Ok(room) => json_response(StatusCode::OK, room_state_json(room)),
                 Err(err) => call_error_response(err),
-            });
+            })
         }
         "signaling" => {
             if req.method().as_str() != "GET" || segments.len() != 4 {
@@ -472,12 +472,12 @@ async fn handle_calls_request(
             }
             let participant_id = match parse_participant_id(segments[3]) {
                 Ok(id) => id,
-                Err(resp) => return Ok(resp),
+                Err(resp) => return Ok(*resp),
             };
             let res = state
                 .call_manager
                 .get_signaling(room_id.clone(), participant_id.clone());
-            return Ok(match res {
+            Ok(match res {
                 Ok(record) => json_response(
                     StatusCode::OK,
                     serde_json::json!({
@@ -487,7 +487,7 @@ async fn handle_calls_request(
                     }),
                 ),
                 Err(err) => call_error_response(err),
-            });
+            })
         }
         _ => Ok(not_found_response()),
     }
@@ -500,7 +500,7 @@ async fn handle_sfu_request(
 ) -> Result<Response<Full<Bytes>>, hyper::Error> {
     let path = req.uri().path().trim_start_matches('/');
     let segments: Vec<&str> = path.split('/').collect();
-    if segments.get(0) != Some(&"sfu") || segments.get(1) != Some(&"rooms") {
+    if segments.first() != Some(&"sfu") || segments.get(1) != Some(&"rooms") {
         return Ok(not_found_response());
     }
     if segments.len() == 2 {
@@ -522,7 +522,7 @@ async fn handle_sfu_request(
     if segments.len() >= 3 {
         let room_id = match parse_room_id(segments[2]) {
             Ok(id) => id,
-            Err(resp) => return Ok(resp),
+            Err(resp) => return Ok(*resp),
         };
         if segments.len() == 3 {
             if req.method().as_str() != "GET" {
@@ -563,23 +563,23 @@ async fn handle_sfu_request(
             if req.method().as_str() != "POST" {
                 return Ok(method_not_allowed_response());
             }
-            match segments[3] {
+            return match segments[3] {
                 "create" => {
                     let res = sfu.create_room(room_id.clone(), now_ms());
-                    return Ok(match res {
+                    Ok(match res {
                         Ok(_) => json_response(
                             StatusCode::CREATED,
                             serde_json::json!({"room_id": room_id.to_string()}),
                         ),
                         Err(err) => sfu_error_response(err),
-                    });
+                    })
                 }
                 "delete" => {
                     let res = sfu.delete_room(room_id.clone());
-                    return Ok(match res {
+                    Ok(match res {
                         Ok(_) => json_response(StatusCode::OK, serde_json::json!({"status":"ok"})),
                         Err(err) => sfu_error_response(err),
-                    });
+                    })
                 }
                 "join" => {
                     let parsed = parse_body::<JoinPayload>(req.into_body()).await?;
@@ -589,17 +589,17 @@ async fn handle_sfu_request(
                     };
                     let participant_id = match parse_participant_id(&payload.participant_id) {
                         Ok(id) => id,
-                        Err(resp) => return Ok(resp),
+                        Err(resp) => return Ok(*resp),
                     };
                     let meta = ParticipantMeta {
                         display_name: payload.display_name,
                         tags: HashMap::new(),
                     };
                     let res = sfu.join(room_id.clone(), participant_id, meta, now_ms());
-                    return Ok(match res {
+                    Ok(match res {
                         Ok(_) => json_response(StatusCode::OK, serde_json::json!({"status":"ok"})),
                         Err(err) => sfu_error_response(err),
-                    });
+                    })
                 }
                 "leave" => {
                     let parsed = parse_body::<LeavePayload>(req.into_body()).await?;
@@ -609,13 +609,13 @@ async fn handle_sfu_request(
                     };
                     let participant_id = match parse_participant_id(&payload.participant_id) {
                         Ok(id) => id,
-                        Err(resp) => return Ok(resp),
+                        Err(resp) => return Ok(*resp),
                     };
                     let res = sfu.leave(room_id.clone(), participant_id);
-                    return Ok(match res {
+                    Ok(match res {
                         Ok(_) => json_response(StatusCode::OK, serde_json::json!({"status":"ok"})),
                         Err(err) => sfu_error_response(err),
-                    });
+                    })
                 }
                 "publish" => {
                     let parsed = parse_body::<PublishPayload>(req.into_body()).await?;
@@ -625,7 +625,7 @@ async fn handle_sfu_request(
                     };
                     let participant_id = match parse_participant_id(&payload.participant_id) {
                         Ok(id) => id,
-                        Err(resp) => return Ok(resp),
+                        Err(resp) => return Ok(*resp),
                     };
                     if let Some(resp) =
                         enforce_publish_limit(&state, &sfu, &room_id, &participant_id)
@@ -639,13 +639,13 @@ async fn handle_sfu_request(
                         payload.codec_hint,
                         now_ms(),
                     );
-                    return Ok(match res {
+                    Ok(match res {
                         Ok(track_id) => json_response(
                             StatusCode::CREATED,
                             serde_json::json!({"track_id": track_id.to_string()}),
                         ),
                         Err(err) => sfu_error_response(err),
-                    });
+                    })
                 }
                 "unpublish" => {
                     let parsed = parse_body::<TrackPayload>(req.into_body()).await?;
@@ -655,13 +655,13 @@ async fn handle_sfu_request(
                     };
                     let track_id = match parse_track_id(&payload.track_id) {
                         Ok(id) => id,
-                        Err(resp) => return Ok(resp),
+                        Err(resp) => return Ok(*resp),
                     };
                     let res = sfu.unpublish_track(room_id.clone(), track_id);
-                    return Ok(match res {
+                    Ok(match res {
                         Ok(_) => json_response(StatusCode::OK, serde_json::json!({"status":"ok"})),
                         Err(err) => sfu_error_response(err),
-                    });
+                    })
                 }
                 "subscribe" => {
                     let parsed = parse_body::<SubscriptionPayload>(req.into_body()).await?;
@@ -671,11 +671,11 @@ async fn handle_sfu_request(
                     };
                     let participant_id = match parse_participant_id(&payload.participant_id) {
                         Ok(id) => id,
-                        Err(resp) => return Ok(resp),
+                        Err(resp) => return Ok(*resp),
                     };
                     let track_id = match parse_track_id(&payload.track_id) {
                         Ok(id) => id,
-                        Err(resp) => return Ok(resp),
+                        Err(resp) => return Ok(*resp),
                     };
                     if let Some(resp) =
                         enforce_subscription_limit(&state, &sfu, &room_id, &participant_id)
@@ -683,10 +683,10 @@ async fn handle_sfu_request(
                         return Ok(resp);
                     }
                     let res = sfu.subscribe(room_id.clone(), participant_id, track_id);
-                    return Ok(match res {
+                    Ok(match res {
                         Ok(_) => json_response(StatusCode::OK, serde_json::json!({"status":"ok"})),
                         Err(err) => sfu_error_response(err),
-                    });
+                    })
                 }
                 "unsubscribe" => {
                     let parsed = parse_body::<SubscriptionPayload>(req.into_body()).await?;
@@ -696,20 +696,20 @@ async fn handle_sfu_request(
                     };
                     let participant_id = match parse_participant_id(&payload.participant_id) {
                         Ok(id) => id,
-                        Err(resp) => return Ok(resp),
+                        Err(resp) => return Ok(*resp),
                     };
                     let track_id = match parse_track_id(&payload.track_id) {
                         Ok(id) => id,
-                        Err(resp) => return Ok(resp),
+                        Err(resp) => return Ok(*resp),
                     };
                     let res = sfu.unsubscribe(room_id.clone(), participant_id, track_id);
-                    return Ok(match res {
+                    Ok(match res {
                         Ok(_) => json_response(StatusCode::OK, serde_json::json!({"status":"ok"})),
                         Err(err) => sfu_error_response(err),
-                    });
+                    })
                 }
-                _ => return Ok(not_found_response()),
-            }
+                _ => Ok(not_found_response()),
+            };
         }
     }
     Ok(not_found_response())
@@ -739,16 +739,18 @@ async fn parse_body<T: DeserializeOwned>(
     }
 }
 
-fn parse_room_id(value: &str) -> Result<RoomId, Response<Full<Bytes>>> {
-    RoomId::from_str(value).map_err(sfu_error_response)
+type BoxedResponse = Box<Response<Full<Bytes>>>;
+
+fn parse_room_id(value: &str) -> Result<RoomId, BoxedResponse> {
+    RoomId::from_str(value).map_err(|err| Box::new(sfu_error_response(err)))
 }
 
-fn parse_participant_id(value: &str) -> Result<ParticipantId, Response<Full<Bytes>>> {
-    ParticipantId::from_str(value).map_err(sfu_error_response)
+fn parse_participant_id(value: &str) -> Result<ParticipantId, BoxedResponse> {
+    ParticipantId::from_str(value).map_err(|err| Box::new(sfu_error_response(err)))
 }
 
-fn parse_track_id(value: &str) -> Result<TrackId, Response<Full<Bytes>>> {
-    TrackId::from_str(value).map_err(sfu_error_response)
+fn parse_track_id(value: &str) -> Result<TrackId, BoxedResponse> {
+    TrackId::from_str(value).map_err(|err| Box::new(sfu_error_response(err)))
 }
 
 fn json_response(status: StatusCode, value: serde_json::Value) -> Response<Full<Bytes>> {
@@ -793,14 +795,14 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-fn parse_direction(value: &str) -> Result<IceDirection, Response<Full<Bytes>>> {
+fn parse_direction(value: &str) -> Result<IceDirection, BoxedResponse> {
     match value {
         "local" => Ok(IceDirection::Local),
         "remote" => Ok(IceDirection::Remote),
-        _ => Err(json_response(
+        _ => Err(Box::new(json_response(
             StatusCode::BAD_REQUEST,
             serde_json::json!({"error":"invalid direction"}),
-        )),
+        ))),
     }
 }
 

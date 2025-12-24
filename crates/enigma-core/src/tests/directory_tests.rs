@@ -37,9 +37,11 @@ impl DirectoryResolver for MockDirectoryResolver {
         let mut guard = self.calls.lock().await;
         *guard += 1;
         drop(guard);
+
         let username = handle.trim().trim_start_matches('@');
         let user_id = NodeUserId::from_username(username)
             .map_err(|_| CoreError::Validation("handle".to_string()))?;
+
         let identity = PublicIdentity {
             user_id,
             username_hint: Some(username.to_string()),
@@ -48,6 +50,7 @@ impl DirectoryResolver for MockDirectoryResolver {
             signature: vec![1],
             created_at_ms: now_ms(),
         };
+
         Ok((user_id.to_hex(), identity))
     }
 
@@ -69,11 +72,15 @@ fn handle_recipient(handle: &str) -> OutgoingRecipient {
 
 #[tokio::test]
 async fn directory_resolves_and_caches_handles() {
-    let mut policy = Policy::default();
-    policy.directory_ttl_secs = 1;
+    let policy = Policy {
+        directory_ttl_secs: 1,
+        ..Policy::default()
+    };
+
     let transport = MockTransport::new();
     let registry = Arc::new(InMemoryRegistry::new());
     let relay = Arc::new(InMemoryRelay::new());
+
     let mut core = Core::init(
         base_config(temp_path("dir-cache"), TransportMode::Hybrid),
         policy,
@@ -84,12 +91,15 @@ async fn directory_resolves_and_caches_handles() {
     )
     .await
     .expect("core");
+
     let resolver = Arc::new(MockDirectoryResolver::new());
     core.set_resolver(resolver.clone());
+
     let handle = "@alice";
     let conv = ConversationId {
         value: "conv-handle".to_string(),
     };
+
     let req = OutgoingMessageRequest {
         client_message_id: MessageId::random(),
         conversation_id: conv.clone(),
@@ -104,10 +114,13 @@ async fn directory_resolves_and_caches_handles() {
         ephemeral_expiry_secs: None,
         metadata: None,
     };
+
     core.send_message(req).await.expect("send one");
     assert_eq!(resolver.count().await, 1);
+
     let cached = core.directory.get_by_handle(handle).await.expect("cached");
     assert_eq!(cached.user_id.len(), 64);
+
     let second = OutgoingMessageRequest {
         client_message_id: MessageId::random(),
         conversation_id: conv.clone(),
@@ -122,9 +135,12 @@ async fn directory_resolves_and_caches_handles() {
         ephemeral_expiry_secs: None,
         metadata: None,
     };
+
     core.send_message(second).await.expect("send cached");
     assert_eq!(resolver.count().await, 1);
+
     tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+
     let third = OutgoingMessageRequest {
         client_message_id: MessageId::random(),
         conversation_id: conv,
@@ -139,6 +155,7 @@ async fn directory_resolves_and_caches_handles() {
         ephemeral_expiry_secs: None,
         metadata: None,
     };
+
     core.send_message(third).await.expect("send refresh");
     assert_eq!(resolver.count().await, 2);
 }

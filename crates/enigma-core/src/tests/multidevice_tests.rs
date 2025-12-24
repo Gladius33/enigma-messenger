@@ -36,6 +36,7 @@ impl DirectoryResolver for ResolverWithDevices {
         let username = handle.trim().trim_start_matches('@');
         let user_id = NodeUserId::from_username(username)
             .map_err(|_| CoreError::Validation("handle".to_string()))?;
+
         let identity = PublicIdentity {
             user_id,
             username_hint: Some(username.to_string()),
@@ -44,6 +45,7 @@ impl DirectoryResolver for ResolverWithDevices {
             signature: vec![1],
             created_at_ms: now_ms(),
         };
+
         Ok((user_id.to_hex(), identity))
     }
 
@@ -79,12 +81,18 @@ fn make_devices(count: usize) -> Vec<DeviceId> {
 async fn fanout_to_multiple_devices() {
     let transport = MockTransport::new();
     transport.fail_p2p_times(10).await;
+
     let registry = Arc::new(InMemoryRegistry::new());
     let relay = Arc::new(InMemoryRelay::new());
-    let mut policy = Policy::default();
-    policy.outbox_batch_send = 0;
+
+    let policy = Policy {
+        outbox_batch_send: 0,
+        ..Policy::default()
+    };
+
     let devices = make_devices(2);
     let resolver = Arc::new(ResolverWithDevices::new(devices.clone()));
+
     let mut core = Core::init(
         base_config(temp_path("multi"), TransportMode::P2PWebRTC),
         policy.clone(),
@@ -95,10 +103,13 @@ async fn fanout_to_multiple_devices() {
     )
     .await
     .expect("core");
+
     core.set_resolver(resolver);
+
     let conv = ConversationId {
         value: "multi-conv".to_string(),
     };
+
     let req = OutgoingMessageRequest {
         client_message_id: MessageId::random(),
         conversation_id: conv,
@@ -113,24 +124,31 @@ async fn fanout_to_multiple_devices() {
         ephemeral_expiry_secs: None,
         metadata: None,
     };
+
     core.send_message(req).await.expect("send");
+
     let pending = core
         .outbox
         .load_all_due(crate::time::now_ms().saturating_add(2_000), 8)
         .await
         .expect("outbox");
+
     assert_eq!(pending.len(), 2);
+
     let mut seen = Vec::new();
     for item in pending {
         let dev = item.recipient_device_id.clone().expect("device");
         seen.push(dev.as_uuid());
     }
     assert_eq!(seen.len(), 2);
+
     assert_eq!(policy.receipt_aggregation, ReceiptAggregation::Any);
+
     let msg_id = MessageId::random();
     core.mark_device_delivered(&msg_id.value, "alice", DeviceId::new(seen[0]))
         .await
         .expect("mark");
+
     let delivered = core
         .aggregated_delivered(&msg_id.value, "alice", &devices)
         .await;
@@ -141,12 +159,18 @@ async fn fanout_to_multiple_devices() {
 async fn fallback_to_single_device_when_unknown() {
     let transport = MockTransport::new();
     transport.fail_p2p_times(5).await;
+
     let registry = Arc::new(InMemoryRegistry::new());
     let relay = Arc::new(InMemoryRelay::new());
-    let mut policy = Policy::default();
-    policy.outbox_batch_send = 0;
-    policy.directory_refresh_on_send = true;
+
+    let policy = Policy {
+        outbox_batch_send: 0,
+        directory_refresh_on_send: true,
+        ..Policy::default()
+    };
+
     let resolver = Arc::new(ResolverWithDevices::new(Vec::new()));
+
     let mut core = Core::init(
         base_config(temp_path("multi-fallback"), TransportMode::P2PWebRTC),
         policy,
@@ -157,10 +181,13 @@ async fn fallback_to_single_device_when_unknown() {
     )
     .await
     .expect("core");
+
     core.set_resolver(resolver);
+
     let conv = ConversationId {
         value: "multi-fallback".to_string(),
     };
+
     let req = OutgoingMessageRequest {
         client_message_id: MessageId::random(),
         conversation_id: conv,
@@ -175,13 +202,17 @@ async fn fallback_to_single_device_when_unknown() {
         ephemeral_expiry_secs: None,
         metadata: None,
     };
+
     core.send_message(req).await.expect("send");
+
     let pending = core
         .outbox
         .load_all_due(crate::time::now_ms().saturating_add(2_000), 4)
         .await
         .expect("outbox");
+
     assert_eq!(pending.len(), 1);
+
     assert_eq!(
         pending[0]
             .recipient_device_id

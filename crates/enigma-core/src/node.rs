@@ -11,6 +11,7 @@ pub trait DirectoryResolver: Send + Sync {
     async fn resolve_handle(&self, handle: &str) -> Result<(String, PublicIdentity), CoreError>;
     async fn check_user(&self, handle: &str) -> Result<bool, CoreError>;
     async fn announce_presence(&self, identity: &PublicIdentity) -> Result<(), CoreError>;
+
     async fn resolve_devices(
         &self,
         _user_id: &str,
@@ -53,16 +54,20 @@ impl DirectoryResolver for RegistryDirectoryResolver {
     async fn resolve_handle(&self, handle: &str) -> Result<(String, PublicIdentity), CoreError> {
         let user_id = Self::resolve_handle_to_user_id(handle)?;
         let (secret, pubkey) = requester_keypair();
+
         let envelope = self
             .registry
             .resolve(&user_id.to_hex(), pubkey)
             .await
             .map_err(|_| CoreError::Transport("resolve".to_string()))?;
+
         let Some(env) = envelope else {
             return Err(CoreError::NotFound);
         };
+
         let identity = decrypt_identity_envelope(self.pepper, &env, secret, &user_id)
             .map_err(|_| CoreError::Crypto)?;
+
         Ok((user_id.to_hex(), identity))
     }
 
@@ -78,14 +83,16 @@ impl DirectoryResolver for RegistryDirectoryResolver {
         let addr = self
             .registry
             .endpoints()
-            .get(0)
+            .first()
             .cloned()
             .unwrap_or_else(|| "local".to_string());
+
         let presence = Presence {
             user_id: identity.user_id,
             addr,
             ts_ms: now_ms(),
         };
+
         self.registry
             .announce_presence(presence)
             .await
@@ -103,7 +110,9 @@ mod tests {
         let registry = Arc::new(InMemoryRegistry::new());
         let resolver =
             RegistryDirectoryResolver::new(registry.clone(), registry.envelope_pepper().unwrap());
+
         assert!(resolver.check_user("").await.is_err());
+
         let user_id = UserId::from_username("alice").unwrap();
         let envelope = crate::envelope_crypto::encrypt_identity_envelope(
             registry.envelope_pepper().unwrap(),
@@ -118,7 +127,8 @@ mod tests {
             },
         )
         .unwrap();
-        let _ = registry
+
+        registry
             .register(&user_id.to_hex(), envelope)
             .await
             .unwrap();

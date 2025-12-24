@@ -28,10 +28,12 @@ impl KeyProvider for CliKey {
 async fn main() {
     let args: Vec<String> = std::env::args().collect();
     let command = args.get(1).map(|s| s.as_str()).unwrap_or("init");
-    let mut config = CoreConfig::default();
-    config.storage_path = ".enigma-cli".to_string();
-    config.namespace = "cli".to_string();
-    config.transport_mode = TransportMode::Hybrid;
+    let config = CoreConfig {
+        storage_path: ".enigma-cli".to_string(),
+        namespace: "cli".to_string(),
+        transport_mode: TransportMode::Hybrid,
+        ..CoreConfig::default()
+    };
     let registry = Arc::new(InMemoryRegistry::new());
     let relay = Arc::new(InMemoryRelay::new());
     let transport = Arc::new(MockTransport::new());
@@ -92,11 +94,8 @@ async fn main() {
         }
         "events" => {
             let mut rx = core.subscribe();
-            loop {
-                match rx.recv().await {
-                    Ok(event) => println!("{} {:?}", event.conversation_id.value, event.kind),
-                    Err(_) => break,
-                }
+            while let Ok(event) = rx.recv().await {
+                println!("{} {:?}", event.conversation_id.value, event.kind);
             }
         }
         _ => {

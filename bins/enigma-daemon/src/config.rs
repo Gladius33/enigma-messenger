@@ -67,17 +67,12 @@ pub struct LoggingConfig {
     pub level: String,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum EndpointMode {
+    #[default]
     Http,
     Tls,
-}
-
-impl Default for EndpointMode {
-    fn default() -> Self {
-        EndpointMode::Http
-    }
 }
 
 #[derive(Clone, Debug, Deserialize, Default)]
@@ -92,16 +87,10 @@ pub struct PowConfig {
     pub enabled: bool,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Default)]
 pub struct SfuConfig {
     #[serde(default)]
     pub enabled: bool,
-}
-
-impl Default for SfuConfig {
-    fn default() -> Self {
-        Self { enabled: false }
-    }
 }
 
 #[derive(Clone, Debug, Deserialize)]

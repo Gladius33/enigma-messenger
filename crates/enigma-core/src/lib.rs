@@ -68,9 +68,6 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 
 #[cfg(feature = "sender-keys")]
-use packet::format_kind;
-
-#[cfg(feature = "sender-keys")]
 use group_crypto::{
     build_distribution_payload, decrypt_group_message, distribution_sent, encrypt_group_message,
     load_or_create_sender_state, load_state, membership_fingerprint, parse_distribution_payload,
@@ -79,7 +76,11 @@ use group_crypto::{
 };
 
 #[cfg(feature = "sender-keys")]
+use packet::format_kind;
+
+#[cfg(feature = "sender-keys")]
 use policy::GroupCryptoMode;
+
 #[derive(Clone)]
 pub struct Core {
     config: CoreConfig,
@@ -119,12 +120,15 @@ impl Core {
         )
         .map_err(|_| CoreError::Storage)?;
         let identity = LocalIdentity::load_or_create(&store, config.user_handle.clone())?;
+
         let store_arc = Arc::new(Mutex::new(store));
         let sessions = SessionManager::new(identity.user_id.clone(), store_arc.clone());
         let directory = ContactDirectory::new(store_arc.clone());
+
         let pepper = registry.envelope_pepper().ok_or(CoreError::Crypto)?;
         let resolver: Arc<dyn DirectoryResolver> =
             Arc::new(RegistryDirectoryResolver::new(registry.clone(), pepper));
+
         let core = Self {
             config: config.clone(),
             policy: policy.clone(),
@@ -146,13 +150,16 @@ impl Core {
             #[cfg(test)]
             persist_fail: Arc::new(AtomicBool::new(false)),
         };
+
         register_identity(core.registry.clone(), &identity).await?;
+
         if core.config.polling_interval_ms > 0 {
             core.start_relay_poller();
         }
         if core.policy.outbox_batch_send > 0 {
             core.start_outbox_worker();
         }
+
         core.start_presence_announcer();
         Ok(core)
     }
@@ -175,8 +182,10 @@ impl Core {
         };
         enigma_api::validation::validate_message_request(&request, &limits)
             .map_err(|e| CoreError::Validation(format!("{:?}", e)))?;
+
         let conversation = ConversationId::new(request.conversation_id.value.clone());
         let group_opt = self.groups.get(&conversation).await;
+
         if matches!(request.kind, enigma_api::types::MessageKind::ChannelPost) {
             let channel = self
                 .channels
@@ -191,6 +200,7 @@ impl Core {
                 return Err(CoreError::Validation("channel_post_denied".to_string()));
             }
         }
+
         if let Some(group) = group_opt.as_ref() {
             let allowed = group
                 .members
@@ -202,43 +212,52 @@ impl Core {
                 return Err(CoreError::Validation("group_member_missing".to_string()));
             }
         }
+
         #[cfg(feature = "sender-keys")]
         if matches!(self.policy.group_crypto_mode, GroupCryptoMode::SenderKeys) {
             if let Some(group) = group_opt.clone() {
                 return self.send_group_with_sender_keys(request, group).await;
             }
         }
+
         if !self.config.allow_attachments && request.attachment.is_some() {
             return Err(CoreError::Validation("attachments_disabled".to_string()));
         }
+
         let sender_hex = request.sender.value.clone();
+
         for recipient in request.recipients.iter() {
             let recipient_hex = self.resolve_recipient(recipient).await?;
             let recipient_user = UserId::from_hex(&recipient_hex)
                 .ok_or(CoreError::Validation("recipient".to_string()))?;
+
             let edited = request
                 .metadata
                 .as_ref()
                 .and_then(|m| m.get("edited"))
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
+
             let deleted = request
                 .metadata
                 .as_ref()
                 .and_then(|m| m.get("deleted"))
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
+
             let devices = self.recipient_devices(&recipient_hex).await?;
             let target_devices: Vec<DeviceId> = if devices.is_empty() {
                 vec![DeviceId::nil()]
             } else {
                 devices.clone()
             };
+
             for device_id in target_devices.iter() {
                 let key = {
                     let mut sessions = self.sessions.lock().await;
                     sessions.next_key(&recipient_user, device_id).await?
                 };
+
                 let plain = PlainMessage {
                     conversation_id: request.conversation_id.value.clone(),
                     message_id: request.client_message_id.value,
@@ -251,14 +270,17 @@ impl Core {
                     deleted,
                     distribution_payload: None,
                 };
+
                 let frame = build_frame(
                     plain,
                     &key,
                     self.identity.device_id.clone(),
                     device_id.clone(),
                 )?;
+
                 let envelope = WireEnvelope::Message(frame);
                 let bytes = serialize_envelope(&envelope)?;
+
                 let outbox_id = Uuid::new_v4();
                 let item = OutboxItem {
                     id: outbox_id,
@@ -271,19 +293,23 @@ impl Core {
                     packet: bytes.clone(),
                     recipient_device_id: Some(device_id.clone()),
                 };
+
                 let _ = self.outbox.put(item).await;
+
                 let sent = self.send_outbox_item_bytes(&recipient_hex, &bytes).await;
                 if sent.is_ok() {
                     let _ = self.outbox.mark_sent(&outbox_id).await;
                 } else {
                     let _ = self.outbox.bump_retry(&outbox_id, &self.policy).await;
                 }
+
                 if let Some(descriptor) = request.attachment.as_ref() {
                     if let Some(data) = request.attachment_bytes.as_ref() {
                         let chunks = prepare_chunks(descriptor, data, &self.policy)?;
                         for chunk in chunks {
                             let chunk_env = WireEnvelope::Attachment(chunk);
                             let payload = serialize_envelope(&chunk_env)?;
+
                             let att_id = Uuid::new_v4();
                             let att_item = OutboxItem {
                                 id: att_id,
@@ -296,7 +322,9 @@ impl Core {
                                 packet: payload.clone(),
                                 recipient_device_id: Some(device_id.clone()),
                             };
+
                             let _ = self.outbox.put(att_item).await;
+
                             let att_sent =
                                 self.send_outbox_item_bytes(&recipient_hex, &payload).await;
                             if att_sent.is_ok() {
@@ -309,6 +337,7 @@ impl Core {
                 }
             }
         }
+
         Ok(request.client_message_id.clone())
     }
 
@@ -321,15 +350,19 @@ impl Core {
         if !self.config.allow_attachments && request.attachment.is_some() {
             return Err(CoreError::Validation("attachments_disabled".to_string()));
         }
+
         let sender_hex = request.sender.value.clone();
         let now = now_ms();
+
         let member_ids: Vec<String> = group
             .members
             .iter()
             .filter(|m| m.user_id.value != sender_hex)
             .map(|m| m.user_id.value.clone())
             .collect();
+
         let fingerprint = membership_fingerprint(&member_ids);
+
         let mut state = load_or_create_sender_state(
             self.store.clone(),
             &group.id.value,
@@ -338,6 +371,7 @@ impl Core {
             fingerprint,
         )
         .await?;
+
         if self.policy.sender_keys_rotate_on_membership_change
             && state.members_fingerprint != fingerprint
         {
@@ -347,7 +381,9 @@ impl Core {
             state = rotate_sender_state(self.store.clone(), &state, now, state.members_fingerprint)
                 .await?;
         }
+
         let dist_payload = build_distribution_payload(&state);
+
         let mut targets = Vec::new();
         for member in group.members.into_iter() {
             if member.user_id.value == sender_hex {
@@ -356,6 +392,7 @@ impl Core {
             let devices = self.recipient_devices(&member.user_id.value).await?;
             targets.push((member.user_id.value, devices));
         }
+
         for (user_id, devices) in targets.iter() {
             let recipient =
                 UserId::from_hex(user_id).ok_or(CoreError::Validation("recipient".to_string()))?;
@@ -364,6 +401,7 @@ impl Core {
             } else {
                 devices.clone()
             };
+
             for device in target_devices.iter() {
                 if distribution_sent(
                     self.store.clone(),
@@ -377,7 +415,9 @@ impl Core {
                 {
                     continue;
                 }
+
                 let conversation = self.dm_conversation(&recipient);
+
                 let plain = PlainMessage {
                     conversation_id: conversation.value.clone(),
                     message_id: Uuid::new_v4(),
@@ -390,14 +430,17 @@ impl Core {
                     deleted: false,
                     distribution_payload: Some(dist_payload.clone()),
                 };
+
                 let key = {
                     let mut sessions = self.sessions.lock().await;
                     sessions.next_key(&recipient, device).await?
                 };
+
                 let frame =
                     build_frame(plain, &key, self.identity.device_id.clone(), device.clone())?;
                 let envelope = WireEnvelope::Message(frame);
                 let bytes = serialize_envelope(&envelope)?;
+
                 let outbox_id = Uuid::new_v4();
                 let item = OutboxItem {
                     id: outbox_id,
@@ -410,13 +453,16 @@ impl Core {
                     packet: bytes.clone(),
                     recipient_device_id: Some(device.clone()),
                 };
+
                 let _ = self.outbox.put(item).await;
+
                 let sent = self.send_outbox_item_bytes(user_id, &bytes).await;
                 if sent.is_ok() {
                     let _ = self.outbox.mark_sent(&outbox_id).await;
                 } else {
                     let _ = self.outbox.bump_retry(&outbox_id, &self.policy).await;
                 }
+
                 let _ = store_distribution_marker(
                     self.store.clone(),
                     &group.id.value,
@@ -428,6 +474,7 @@ impl Core {
                 .await;
             }
         }
+
         let plain = PlainMessage {
             conversation_id: request.conversation_id.value.clone(),
             message_id: request.client_message_id.value,
@@ -450,10 +497,12 @@ impl Core {
                 .unwrap_or(false),
             distribution_payload: None,
         };
+
         let plain_bytes = serde_json::to_vec(&plain).map_err(|_| CoreError::Crypto)?;
         let (updated_state, msg_index, ciphertext, ad) =
             encrypt_group_message(&state, &plain_bytes)?;
         save_state(self.store.clone(), &updated_state).await?;
+
         let frame = packet::MessageFrame {
             conversation_id: plain.conversation_id.clone(),
             message_id: plain.message_id,
@@ -467,8 +516,10 @@ impl Core {
             group_epoch: Some(state.epoch.0),
             group_msg_index: Some(msg_index),
         };
+
         let envelope = WireEnvelope::Message(frame);
         let bytes = serialize_envelope(&envelope)?;
+
         for (user_id, devices) in targets.iter() {
             let target_devices = if devices.is_empty() {
                 vec![DeviceId::nil()]
@@ -489,7 +540,8 @@ impl Core {
                     recipient_device_id: Some(device.clone()),
                 };
                 let _ = self.outbox.put(item).await;
-                let sent = self.send_outbox_item_bytes(&user_id, &bytes).await;
+
+                let sent = self.send_outbox_item_bytes(user_id, &bytes).await;
                 if sent.is_ok() {
                     let _ = self.outbox.mark_sent(&outbox_id).await;
                 } else {
@@ -497,6 +549,7 @@ impl Core {
                 }
             }
         }
+
         if let Some(descriptor) = request.attachment.as_ref() {
             if let Some(data) = request.attachment_bytes.as_ref() {
                 let chunks = prepare_chunks(descriptor, data, &self.policy)?;
@@ -523,6 +576,7 @@ impl Core {
                                 recipient_device_id: Some(device.clone()),
                             };
                             let _ = self.outbox.put(att_item).await;
+
                             let att_sent = self.send_outbox_item_bytes(user_id, &payload).await;
                             if att_sent.is_ok() {
                                 let _ = self.outbox.mark_sent(&att_id).await;
@@ -534,6 +588,7 @@ impl Core {
                 }
             }
         }
+
         Ok(request.client_message_id.clone())
     }
 
@@ -541,6 +596,7 @@ impl Core {
         let is_attachment = deserialize_envelope(bytes)
             .map(|env| matches!(env, WireEnvelope::Attachment(_)))
             .unwrap_or(false);
+
         match self.config.transport_mode {
             TransportMode::RelayOnly => {
                 let env = build_relay_envelope(
@@ -553,11 +609,12 @@ impl Core {
             }
             TransportMode::P2PWebRTC => self.transport.send_p2p(recipient, bytes).await,
             TransportMode::Hybrid => {
-                if self.transport.p2p_ready(recipient).await {
-                    if self.transport.send_p2p(recipient, bytes).await.is_ok() {
-                        return Ok(());
-                    }
+                if self.transport.p2p_ready(recipient).await
+                    && self.transport.send_p2p(recipient, bytes).await.is_ok()
+                {
+                    return Ok(());
                 }
+
                 let env = build_relay_envelope(
                     &self.identity.user_id,
                     recipient,
@@ -589,36 +646,38 @@ impl Core {
     async fn process_relay(&self) -> Result<(), CoreError> {
         let pulled = self.relay.pull(&self.identity.user_id.to_hex()).await?;
         let mut ack_entries = Vec::new();
+
         for item in pulled.items.iter() {
             let env = &item.envelope;
             match &env.kind {
                 RelayKind::OpaqueMessage(msg) => {
                     if let Ok(bytes) = STANDARD.decode(&msg.blob_b64) {
-                        if self.persist_incoming(env.id, &bytes).await.is_ok() {
-                            if self.handle_incoming_bytes(bytes, true).await.is_ok() {
-                                ack_entries.push(RelayAck {
-                                    message_id: env.id,
-                                    chunk_index: item.chunk_index,
-                                });
-                            }
+                        if self.persist_incoming(env.id, &bytes).await.is_ok()
+                            && self.handle_incoming_bytes(bytes, true).await.is_ok()
+                        {
+                            ack_entries.push(RelayAck {
+                                message_id: env.id,
+                                chunk_index: item.chunk_index,
+                            });
                         }
                     }
                 }
                 RelayKind::OpaqueAttachmentChunk(chunk) => {
                     if let Ok(bytes) = STANDARD.decode(&chunk.blob_b64) {
-                        if self.persist_incoming(env.id, &bytes).await.is_ok() {
-                            if self.handle_incoming_bytes(bytes, true).await.is_ok() {
-                                ack_entries.push(RelayAck {
-                                    message_id: env.id,
-                                    chunk_index: item.chunk_index,
-                                });
-                            }
+                        if self.persist_incoming(env.id, &bytes).await.is_ok()
+                            && self.handle_incoming_bytes(bytes, true).await.is_ok()
+                        {
+                            ack_entries.push(RelayAck {
+                                message_id: env.id,
+                                chunk_index: item.chunk_index,
+                            });
                         }
                     }
                 }
                 RelayKind::OpaqueSignaling(_) => {}
             }
         }
+
         if !ack_entries.is_empty() {
             let ack_response = self
                 .relay
@@ -628,6 +687,7 @@ impl Core {
                 return Err(CoreError::Relay("ack".to_string()));
             }
         }
+
         Ok(())
     }
 
@@ -664,12 +724,15 @@ impl Core {
             .clone()
             .or_else(|| parse_sender(&frame.associated_data))
             .ok_or(CoreError::Validation("sender".to_string()))?;
+
         let sender_user =
             UserId::from_hex(&sender_hex).ok_or(CoreError::Validation("sender".to_string()))?;
+
         let sender_device = frame
             .target_device_id
             .map(DeviceId::new)
             .unwrap_or_else(DeviceId::nil);
+
         let mut sessions = self.sessions.lock().await;
         let key = sessions.next_key(&sender_user, &sender_device).await?;
         let message = decode_frame(&frame, &key)?;
@@ -704,8 +767,10 @@ impl Core {
             edited: message.edited,
             deleted: message.deleted,
         };
+
         let event_clone = event.clone();
         self.events.publish(event);
+
         let _ = self
             .receipts
             .mark_delivered(
@@ -714,6 +779,7 @@ impl Core {
                 &self.identity.device_id,
             )
             .await;
+
         Ok(())
     }
 
@@ -739,9 +805,11 @@ impl Core {
             .clone()
             .or_else(|| parse_sender(&frame.associated_data))
             .ok_or(CoreError::Validation("sender".to_string()))?;
+
         let sender_key_id = frame.group_sender_key_id.ok_or(CoreError::Crypto)?;
         let msg_index = frame.group_msg_index.unwrap_or(0);
         let state = load_state(self.store.clone(), &frame.conversation_id, &sender_hex).await?;
+
         let Some(state) = state else {
             store_pending_message(
                 self.store.clone(),
@@ -754,6 +822,7 @@ impl Core {
             .await?;
             return Err(CoreError::Crypto);
         };
+
         let (updated_state, plaintext) = decrypt_group_message(
             &state,
             sender_key_id,
@@ -761,6 +830,7 @@ impl Core {
             &frame.ciphertext,
             &frame.associated_data,
         )?;
+
         save_state(self.store.clone(), &updated_state).await?;
         let message: PlainMessage =
             serde_json::from_slice(&plaintext).map_err(|_| CoreError::Crypto)?;
@@ -780,6 +850,7 @@ impl Core {
             pending_state.sender_key_id,
         )
         .await?;
+
         for (msg_index, bytes) in pending.into_iter() {
             if let Ok(WireEnvelope::Message(frame)) = deserialize_envelope(&bytes) {
                 if frame.group_sender_key_id == Some(pending_state.sender_key_id) {
@@ -799,6 +870,7 @@ impl Core {
                 }
             }
         }
+
         Ok(())
     }
 
@@ -842,11 +914,13 @@ impl Core {
         let cloned = self.clone();
         let batch = self.policy.outbox_batch_send;
         let window_ms = self.policy.max_retry_window_secs.saturating_mul(1000);
+
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(Duration::from_millis(250));
             loop {
                 ticker.tick().await;
                 let now = now_ms();
+
                 if let Ok(items) = cloned.outbox.load_all_due(now, batch).await {
                     for item in items {
                         if now.saturating_sub(item.created_at_ms) > window_ms {
@@ -885,24 +959,29 @@ impl Core {
             }
             return Ok(trimmed.to_string());
         }
+
         if let Some(handle) = recipient.recipient_handle.as_ref() {
             let handle_trimmed = handle.trim();
             let now = now_ms();
             let ttl_ms = self.policy.directory_ttl_secs.saturating_mul(1000);
+
             if let Some(contact) = self.directory.get_by_handle(handle_trimmed).await {
                 let fresh = now.saturating_sub(contact.last_resolved_ms) <= ttl_ms;
                 if fresh || !self.policy.directory_refresh_on_send {
                     return Ok(contact.user_id);
                 }
             }
+
             let (user_id, identity) = self.resolver.resolve_handle(handle_trimmed).await?;
             let _ = self
                 .directory
                 .add_or_update_contact(handle_trimmed, &user_id, None, now)
                 .await;
+
             let _ = identity;
             return Ok(user_id);
         }
+
         Err(CoreError::Validation("recipient".to_string()))
     }
 
@@ -911,6 +990,7 @@ impl Core {
         if !cached.is_empty() {
             return Ok(cached.into_iter().map(|d| d.device_id).collect());
         }
+
         if self.policy.directory_refresh_on_send {
             let devices = self.resolver.resolve_devices(user_id).await?;
             if !devices.is_empty() {
@@ -918,6 +998,7 @@ impl Core {
                 return Ok(devices.into_iter().map(|d| d.device_id).collect());
             }
         }
+
         Ok(Vec::new())
     }
 
@@ -1005,9 +1086,10 @@ impl Core {
 }
 
 fn parse_sender(bytes: &[u8]) -> Option<String> {
-    String::from_utf8(bytes.to_vec())
+    std::str::from_utf8(bytes)
         .ok()
-        .and_then(|value| value.split(':').last().map(|s| s.to_string()))
+        .and_then(|value| value.split(':').next_back())
+        .map(|s| s.to_string())
 }
 
 fn build_relay_envelope(
@@ -1020,10 +1102,12 @@ fn build_relay_envelope(
         .map_err(|_| CoreError::Transport("relay_to".to_string()))?;
     let from = NodeUserId::from_hex(&sender.to_hex()).ok();
     let blob_b64 = STANDARD.encode(&bytes);
+
     let kind = RelayKind::OpaqueMessage(OpaqueMessage {
         blob_b64,
         content_type: None,
     });
+
     Ok(RelayEnvelope {
         id: Uuid::new_v4(),
         to,

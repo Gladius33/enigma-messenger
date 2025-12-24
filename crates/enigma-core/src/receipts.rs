@@ -78,10 +78,12 @@ impl ReceiptStore {
                 delivered: false,
                 read: false,
             });
+
         let merged = DeviceReceipt {
             delivered: existing.delivered || receipt.delivered,
             read: existing.read || receipt.read,
         };
+
         let bytes = serde_json::to_vec(&merged).map_err(|_| CoreError::Storage)?;
         guard.put(&key, &bytes).map_err(|_| CoreError::Storage)
     }
@@ -118,6 +120,7 @@ impl ReceiptStore {
     ) -> bool {
         let store = self.store.lock().await;
         let mut results = HashMap::new();
+
         if devices.is_empty() {
             let key = Self::receipt_key(message_id, user_id, &DeviceId::nil());
             if let Some(bytes) = store.get(&key).ok().flatten() {
@@ -126,6 +129,7 @@ impl ReceiptStore {
                 }
             }
         }
+
         for device in devices {
             let key = Self::receipt_key(message_id, user_id, device);
             if let Some(bytes) = store.get(&key).ok().flatten() {
@@ -134,18 +138,20 @@ impl ReceiptStore {
                 }
             }
         }
+
         if results.is_empty() && devices.is_empty() {
             return false;
         }
+
         match mode {
-            ReceiptAggregation::Any => results.values().any(|r| predicate(r)),
+            ReceiptAggregation::Any => results.values().any(&predicate),
             ReceiptAggregation::All => {
                 if devices.is_empty() {
-                    results.values().all(|r| predicate(r))
+                    results.values().all(&predicate)
                 } else {
                     devices
                         .iter()
-                        .all(|d| results.get(d).map(|r| predicate(r)).unwrap_or(false))
+                        .all(|d| results.get(d).map(&predicate).unwrap_or(false))
                 }
             }
         }

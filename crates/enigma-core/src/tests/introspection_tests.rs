@@ -1,5 +1,3 @@
-#![cfg(feature = "dev")]
-
 use super::{base_config, key_provider, temp_path};
 use crate::config::TransportMode;
 use crate::directory::InMemoryRegistry;
@@ -16,6 +14,7 @@ async fn stats_and_health_work() {
     let registry = Arc::new(InMemoryRegistry::new());
     let relay = Arc::new(InMemoryRelay::new());
     let config = base_config(temp_path("introspection"), TransportMode::P2PWebRTC);
+
     let core = Core::init(
         config.clone(),
         Policy::default(),
@@ -26,11 +25,12 @@ async fn stats_and_health_work() {
     )
     .await
     .expect("core init");
-    let _ = core.create_group("devs".to_string()).await.expect("group");
-    let _ = core
-        .create_channel("updates".to_string())
+
+    core.create_group("devs".to_string()).await.expect("group");
+    core.create_channel("updates".to_string())
         .await
         .expect("channel");
+
     let stats = core.stats().await;
     assert_eq!(stats.user_id_hex, core.local_identity().user_id.to_hex());
     assert_eq!(stats.device_id, core.local_identity().device_id);
@@ -38,20 +38,24 @@ async fn stats_and_health_work() {
     assert_eq!(stats.channels, 1);
     assert_eq!(stats.conversations, 2);
     assert_eq!(stats.pending_outbox, 0);
+
     let health = core.store_health().await;
     assert_eq!(health.namespace, config.namespace);
     assert!(health.ok);
+
     let registry_status = core.registry_status().await;
     assert!(registry_status.endpoints.is_empty());
     assert_eq!(core.directory_len().await, 0);
-    let _ = core
-        .directory
+
+    core.directory
         .add_or_update_contact(
             "@self",
             &core.local_identity().user_id.to_hex(),
             None,
             now_ms(),
         )
-        .await;
+        .await
+        .expect("contact");
+
     assert_eq!(core.directory_len().await, 1);
 }

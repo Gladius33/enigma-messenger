@@ -44,10 +44,7 @@ impl AttachmentAssembler {
     }
 
     pub fn ingest(&mut self, chunk: AttachmentChunk) -> Option<Vec<u8>> {
-        let entry = self
-            .pending
-            .entry(chunk.attachment_id)
-            .or_insert_with(Vec::new);
+        let entry = self.pending.entry(chunk.attachment_id).or_default();
         entry.push(chunk.clone());
         if entry.iter().any(|c| c.is_last) {
             if let Some(data) = reassemble_attachment(entry) {
@@ -116,4 +113,10 @@ fn reassemble_attachment(chunks: &[AttachmentChunk]) -> Option<Vec<u8>> {
         data.extend_from_slice(&chunk.bytes);
     }
     Some(data)
+}
+
+impl Default for AttachmentAssembler {
+    fn default() -> Self {
+        Self::new()
+    }
 }

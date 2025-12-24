@@ -60,10 +60,14 @@ async fn outbox_retries_after_relay_failure() {
     let transport = MockTransport::new();
     let registry = Arc::new(InMemoryRegistry::new());
     let relay = Arc::new(FlakyRelay::new(1));
-    let mut policy = Policy::default();
-    policy.backoff_initial_ms = 10;
-    policy.backoff_max_ms = 50;
-    policy.outbox_batch_send = 4;
+
+    let policy = Policy {
+        backoff_initial_ms: 10,
+        backoff_max_ms: 50,
+        outbox_batch_send: 4,
+        ..Policy::default()
+    };
+
     let core_a = Core::init(
         base_config(temp_path("outbox-retry-a"), TransportMode::RelayOnly),
         policy.clone(),
@@ -74,6 +78,7 @@ async fn outbox_retries_after_relay_failure() {
     )
     .await
     .expect("core a");
+
     let core_b = Core::init(
         base_config(temp_path("outbox-retry-b"), TransportMode::RelayOnly),
         policy,
@@ -84,8 +89,10 @@ async fn outbox_retries_after_relay_failure() {
     )
     .await
     .expect("core b");
+
     let conv = core_a.dm_conversation(&core_b.local_identity().user_id);
     let mut rx_b = core_b.subscribe();
+
     let req = OutgoingMessageRequest {
         client_message_id: MessageId::random(),
         conversation_id: ConversationId {
@@ -102,15 +109,20 @@ async fn outbox_retries_after_relay_failure() {
         ephemeral_expiry_secs: None,
         metadata: None,
     };
+
     core_a.send_message(req).await.expect("send");
+
     sleep(Duration::from_millis(700)).await;
     core_b.poll_once().await.expect("poll");
+
     let event = rx_b.recv().await.expect("event");
     assert_eq!(event.text.as_deref(), Some("retry"));
+
     let pending = core_a
         .outbox
         .load_all_due(crate::time::now_ms(), 8)
         .await
         .expect("outbox");
+
     assert!(pending.is_empty());
 }
