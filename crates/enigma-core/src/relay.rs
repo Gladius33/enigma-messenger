@@ -58,10 +58,7 @@ impl RelayGateway {
     }
 
     pub async fn push(&self, envelope: RelayEnvelope) -> Result<(), CoreError> {
-        self.client
-            .push(envelope)
-            .await
-            .map_err(|e| CoreError::Relay(format!("{:?}", e)))
+        self.client.push(envelope).await
     }
 
     pub async fn pull(&self, recipient: &str) -> Result<RelayPullResult, CoreError> {
@@ -69,11 +66,7 @@ impl RelayGateway {
             let guard = self.cursors.lock().await;
             guard.get(recipient).cloned().flatten()
         };
-        let pulled = self
-            .client
-            .pull(recipient, cursor)
-            .await
-            .map_err(|e| CoreError::Relay(format!("{:?}", e)))?;
+        let pulled = self.client.pull(recipient, cursor).await?;
         let mut guard = self.cursors.lock().await;
         guard.insert(recipient.to_string(), pulled.cursor.clone());
         Ok(pulled)
@@ -84,10 +77,7 @@ impl RelayGateway {
         recipient: &str,
         ack: &[RelayAck],
     ) -> Result<RelayAckResponse, CoreError> {
-        self.client
-            .ack(recipient, ack)
-            .await
-            .map_err(|e| CoreError::Relay(format!("{:?}", e)))
+        self.client.ack(recipient, ack).await
     }
 
     pub async fn queue_local(&self, envelope: RelayEnvelope) {

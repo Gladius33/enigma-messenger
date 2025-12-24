@@ -214,13 +214,22 @@ pub async fn register_identity(
     identity: &LocalIdentity,
 ) -> Result<(), CoreError> {
     let pepper = client.envelope_pepper().ok_or(CoreError::Crypto)?;
-    let key_info = client.envelope_key().await?;
-    let envelope = encrypt_identity_envelope(pepper, &key_info, &identity.public_identity)
+    let mut key_info = client.envelope_key().await?;
+    let mut envelope = encrypt_identity_envelope(pepper, &key_info, &identity.public_identity)
         .map_err(|_| CoreError::Crypto)?;
-    client
-        .register(&identity.user_id.to_hex(), envelope)
+    match client
+        .register(&identity.user_id.to_hex(), envelope.clone())
         .await
-        .map_err(|e| CoreError::Transport(format!("register:{:?}", e)))
+    {
+        Ok(_) => Ok(()),
+        Err(CoreError::External(ext)) if ext.retryable => {
+            key_info = client.envelope_key().await?;
+            envelope = encrypt_identity_envelope(pepper, &key_info, &identity.public_identity)
+                .map_err(|_| CoreError::Crypto)?;
+            client.register(&identity.user_id.to_hex(), envelope).await
+        }
+        Err(err) => Err(err),
+    }
 }
 
 #[derive(Clone)]

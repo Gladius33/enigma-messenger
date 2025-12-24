@@ -132,6 +132,7 @@ fn init_logging(cfg: &EnigmaConfig) {
 }
 
 async fn init_core(cfg: &EnigmaConfig) -> Result<Arc<Core>, DaemonError> {
+    cfg.validate().map_err(|_| DaemonError::Config)?;
     let data_dir = cfg.data_dir.clone();
     let storage_path = data_dir.join("core");
     let namespace = format!("daemon-{}", cfg.identity.user_handle);
@@ -725,16 +726,20 @@ async fn parse_body<T: DeserializeOwned>(
 ) -> Result<Result<T, Response<Full<Bytes>>>, hyper::Error> {
     let bytes = collect_bytes(body).await?;
     if bytes.is_empty() {
-        return Ok(Err(json_response(
+        return Ok(Err(api_error_response(
             StatusCode::BAD_REQUEST,
-            serde_json::json!({"error":"empty body"}),
+            "INVALID_BODY",
+            "empty body",
+            None,
         )));
     }
     match serde_json::from_slice(&bytes) {
         Ok(parsed) => Ok(Ok(parsed)),
-        Err(_) => Ok(Err(json_response(
+        Err(_) => Ok(Err(api_error_response(
             StatusCode::BAD_REQUEST,
-            serde_json::json!({"error":"invalid json"}),
+            "INVALID_BODY",
+            "invalid json",
+            None,
         ))),
     }
 }
@@ -761,10 +766,40 @@ fn json_response(status: StatusCode, value: serde_json::Value) -> Response<Full<
         .unwrap()
 }
 
+fn error_body(
+    code: &str,
+    message: impl Into<String>,
+    details: Option<serde_json::Value>,
+) -> serde_json::Value {
+    let mut root = serde_json::json!({
+        "error": {
+            "code": code,
+            "message": message.into(),
+        }
+    });
+    if let Some(det) = details {
+        if let Some(error_obj) = root.get_mut("error").and_then(|v| v.as_object_mut()) {
+            error_obj.insert("details".to_string(), det);
+        }
+    }
+    root
+}
+
+fn api_error_response(
+    status: StatusCode,
+    code: &str,
+    message: impl Into<String>,
+    details: Option<serde_json::Value>,
+) -> Response<Full<Bytes>> {
+    json_response(status, error_body(code, message, details))
+}
+
 fn method_not_allowed_response() -> Response<Full<Bytes>> {
-    json_response(
+    api_error_response(
         StatusCode::METHOD_NOT_ALLOWED,
-        serde_json::json!({"error":"method not allowed"}),
+        "METHOD_NOT_ALLOWED",
+        "method not allowed",
+        None,
     )
 }
 
@@ -778,14 +813,20 @@ fn sfu_error_response(err: SfuError) -> Response<Full<Bytes>> {
         SfuError::NotAllowed => StatusCode::FORBIDDEN,
         SfuError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
     };
-    json_response(status, serde_json::json!({"error": err.to_string()}))
+    let code = match err {
+        SfuError::InvalidId(_) => "INVALID_ID",
+        SfuError::AlreadyExists => "ALREADY_EXISTS",
+        SfuError::RoomNotFound => "ROOM_NOT_FOUND",
+        SfuError::ParticipantNotFound => "PARTICIPANT_NOT_FOUND",
+        SfuError::TrackNotFound => "TRACK_NOT_FOUND",
+        SfuError::NotAllowed => "NOT_ALLOWED",
+        SfuError::Internal(_) => "SFU_INTERNAL",
+    };
+    api_error_response(status, code, err.to_string(), None)
 }
 
 fn not_found_response() -> Response<Full<Bytes>> {
-    Response::builder()
-        .status(StatusCode::NOT_FOUND)
-        .body(Full::from(Bytes::from_static(b"not found")))
-        .unwrap()
+    api_error_response(StatusCode::NOT_FOUND, "NOT_FOUND", "not found", None)
 }
 
 fn now_ms() -> u64 {
@@ -799,33 +840,45 @@ fn parse_direction(value: &str) -> Result<IceDirection, BoxedResponse> {
     match value {
         "local" => Ok(IceDirection::Local),
         "remote" => Ok(IceDirection::Remote),
-        _ => Err(Box::new(json_response(
+        _ => Err(Box::new(api_error_response(
             StatusCode::BAD_REQUEST,
-            serde_json::json!({"error":"invalid direction"}),
+            "INVALID_DIRECTION",
+            "invalid direction",
+            None,
         ))),
     }
 }
 
 fn calls_disabled_response() -> Response<Full<Bytes>> {
-    json_response(
+    api_error_response(
         StatusCode::SERVICE_UNAVAILABLE,
-        serde_json::json!({"error":"calls disabled"}),
+        "CALLS_DISABLED",
+        "calls disabled",
+        None,
     )
 }
 
 fn call_error_response(err: CallManagerError) -> Response<Full<Bytes>> {
     match err {
-        CallManagerError::RoomNotFound | CallManagerError::ParticipantNotFound => json_response(
-            StatusCode::NOT_FOUND,
-            serde_json::json!({"error": err.to_string()}),
-        ),
-        CallManagerError::ParticipantExists => json_response(
+        CallManagerError::RoomNotFound | CallManagerError::ParticipantNotFound => {
+            api_error_response(
+                StatusCode::NOT_FOUND,
+                "CALL_NOT_FOUND",
+                err.to_string(),
+                None,
+            )
+        }
+        CallManagerError::ParticipantExists => api_error_response(
             StatusCode::CONFLICT,
-            serde_json::json!({"error": err.to_string()}),
+            "PARTICIPANT_EXISTS",
+            err.to_string(),
+            None,
         ),
-        CallManagerError::StateUnavailable => json_response(
+        CallManagerError::StateUnavailable => api_error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
-            serde_json::json!({"error": err.to_string()}),
+            "CALL_STATE_UNAVAILABLE",
+            err.to_string(),
+            None,
         ),
         CallManagerError::SfuError(err) => sfu_error_response(err),
     }
@@ -874,17 +927,21 @@ fn enforce_publish_limit(
         return None;
     }
     if state.calls_policy.max_publish_tracks_per_participant == 0 {
-        return Some(json_response(
+        return Some(api_error_response(
             StatusCode::FORBIDDEN,
-            serde_json::json!({"error":"publish limit reached"}),
+            "PUBLISH_LIMIT",
+            "publish limit reached",
+            None,
         ));
     }
     match current_publish_count(state, sfu, room_id, participant_id) {
         Ok(count) => {
             if count >= state.calls_policy.max_publish_tracks_per_participant as usize {
-                return Some(json_response(
+                return Some(api_error_response(
                     StatusCode::FORBIDDEN,
-                    serde_json::json!({"error":"publish limit reached"}),
+                    "PUBLISH_LIMIT",
+                    "publish limit reached",
+                    None,
                 ));
             }
         }
@@ -903,17 +960,21 @@ fn enforce_subscription_limit(
         return None;
     }
     if state.calls_policy.max_subscriptions_per_participant == 0 {
-        return Some(json_response(
+        return Some(api_error_response(
             StatusCode::FORBIDDEN,
-            serde_json::json!({"error":"subscription limit reached"}),
+            "SUBSCRIPTION_LIMIT",
+            "subscription limit reached",
+            None,
         ));
     }
     match current_subscription_count(state, sfu, room_id, participant_id) {
         Ok(count) => {
             if count >= state.calls_policy.max_subscriptions_per_participant as usize {
-                return Some(json_response(
+                return Some(api_error_response(
                     StatusCode::FORBIDDEN,
-                    serde_json::json!({"error":"subscription limit reached"}),
+                    "SUBSCRIPTION_LIMIT",
+                    "subscription limit reached",
+                    None,
                 ));
             }
         }

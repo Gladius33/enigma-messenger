@@ -55,11 +55,7 @@ impl DirectoryResolver for RegistryDirectoryResolver {
         let user_id = Self::resolve_handle_to_user_id(handle)?;
         let (secret, pubkey) = requester_keypair();
 
-        let envelope = self
-            .registry
-            .resolve(&user_id.to_hex(), pubkey)
-            .await
-            .map_err(|_| CoreError::Transport("resolve".to_string()))?;
+        let envelope = self.registry.resolve(&user_id.to_hex(), pubkey).await?;
 
         let Some(env) = envelope else {
             return Err(CoreError::NotFound);
@@ -73,10 +69,7 @@ impl DirectoryResolver for RegistryDirectoryResolver {
 
     async fn check_user(&self, handle: &str) -> Result<bool, CoreError> {
         let user_id = Self::resolve_handle_to_user_id(handle)?;
-        self.registry
-            .check_user(&user_id.to_hex())
-            .await
-            .map_err(|_| CoreError::Transport("check_user".to_string()))
+        self.registry.check_user(&user_id.to_hex()).await
     }
 
     async fn announce_presence(&self, identity: &PublicIdentity) -> Result<(), CoreError> {
@@ -93,10 +86,7 @@ impl DirectoryResolver for RegistryDirectoryResolver {
             ts_ms: now_ms(),
         };
 
-        self.registry
-            .announce_presence(presence)
-            .await
-            .map_err(|_| CoreError::Transport("announce".to_string()))
+        self.registry.announce_presence(presence).await
     }
 }
 

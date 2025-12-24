@@ -39,6 +39,7 @@ enigma-node-types = { workspace = true }
 enigma-api = { path = "../../crates/enigma-api" }
 uuid = { workspace = true }
 hex = { workspace = true }
+sha2 = "0.10"
 
 [dev-dependencies]
 tempfile = "3"
