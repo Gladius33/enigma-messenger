@@ -207,85 +207,89 @@ async fn registry_integration_smoke() {
 
 #[tokio::test]
 async fn relay_integration_outbox() {
-    let relay_cfg = ServerRelayConfig {
-        address: "127.0.0.1:0".to_string(),
-        mode: RelayMode::Http,
-        tls: None,
-        storage: ServerRelayStorageConfig {
-            kind: StorageKind::Memory,
-            path: String::new(),
-        },
-        ..ServerRelayConfig::default()
-    };
-    let running = match start_relay(relay_cfg).await {
-        Ok(running) => running,
-        Err(err) => {
-            if format!("{:?}", err).contains("Operation not permitted") {
-                return;
-            }
-            panic!("{:?}", err);
-        }
-    };
-    let mut cfg_a = test_config(false, false, true);
-    let data_dir_a = tempdir().unwrap();
-    cfg_a.data_dir = data_dir_a.path().to_path_buf();
-    cfg_a.identity.user_handle = "alice".to_string();
-    cfg_a.relay.base_url = Some(running.base_url.clone());
-    cfg_a.registry.enabled = false;
-    cfg_a.policy.outbox_batch_send = 4;
-    cfg_a.policy.max_retry_window_secs = 2;
-    let mut cfg_b = test_config(false, false, true);
-    let data_dir_b = tempdir().unwrap();
-    cfg_b.data_dir = data_dir_b.path().to_path_buf();
-    cfg_b.identity.user_handle = "bob".to_string();
-    cfg_b.relay.base_url = Some(running.base_url.clone());
-    cfg_b.registry.enabled = false;
-    cfg_b.policy.outbox_batch_send = 4;
-    cfg_b.policy.max_retry_window_secs = 2;
-    let core_a = init_core(&cfg_a).await.unwrap();
-    let core_b = init_core(&cfg_b).await.unwrap();
-    let conv = core_a.dm_conversation(&core_b.local_identity().user_id);
-    let mut rx = core_b.subscribe();
-    let req = enigma_api::types::OutgoingMessageRequest {
-        client_message_id: enigma_api::types::MessageId::random(),
-        conversation_id: enigma_api::types::ConversationId {
-            value: conv.value.clone(),
-        },
-        sender: enigma_api::types::UserIdHex {
-            value: core_a.local_identity().user_id.to_hex(),
-        },
-        recipients: vec![enigma_api::types::OutgoingRecipient {
-            recipient_user_id: Some(core_b.local_identity().user_id.to_hex()),
-            recipient_handle: None,
-        }],
-        kind: enigma_api::types::MessageKind::Text,
-        text: Some("hello".to_string()),
-        attachment: None,
-        attachment_bytes: None,
-        ephemeral_expiry_secs: None,
-        metadata: None,
-    };
-    core_a.send_message(req).await.unwrap();
-    core_b.poll_once().await.unwrap();
-    let event = rx.recv().await.unwrap();
-    assert_eq!(event.text.as_deref(), Some("hello"));
-    let relay_client = RelayHttpClient::new(&cfg_a.relay).unwrap();
-    let recipient = core_b.local_identity().user_id.to_hex();
-    let pulled = relay_client.pull(&recipient, None).await.unwrap();
-    let ack_entries: Vec<RelayAck> = pulled
-        .items
-        .iter()
-        .map(|item| RelayAck {
-            message_id: item.envelope.id,
-            chunk_index: item.chunk_index,
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let relay_cfg = ServerRelayConfig {
+                address: "127.0.0.1:0".to_string(),
+                mode: RelayMode::Http,
+                tls: None,
+                storage: ServerRelayStorageConfig {
+                    kind: StorageKind::Memory,
+                    path: String::new(),
+                },
+                ..ServerRelayConfig::default()
+            };
+            let running = match start_relay(relay_cfg).await {
+                Ok(running) => running,
+                Err(err) => {
+                    if format!("{:?}", err).contains("Operation not permitted") {
+                        return;
+                    }
+                    panic!("{:?}", err);
+                }
+            };
+            let mut cfg_a = test_config(false, false, true);
+            let data_dir_a = tempdir().unwrap();
+            cfg_a.data_dir = data_dir_a.path().to_path_buf();
+            cfg_a.identity.user_handle = "alice".to_string();
+            cfg_a.relay.base_url = Some(running.base_url.clone());
+            cfg_a.registry.enabled = false;
+            cfg_a.policy.outbox_batch_send = 4;
+            cfg_a.policy.max_retry_window_secs = 2;
+            let mut cfg_b = test_config(false, false, true);
+            let data_dir_b = tempdir().unwrap();
+            cfg_b.data_dir = data_dir_b.path().to_path_buf();
+            cfg_b.identity.user_handle = "bob".to_string();
+            cfg_b.relay.base_url = Some(running.base_url.clone());
+            cfg_b.registry.enabled = false;
+            cfg_b.policy.outbox_batch_send = 4;
+            cfg_b.policy.max_retry_window_secs = 2;
+            let core_a = init_core(&cfg_a).await.unwrap();
+            let core_b = init_core(&cfg_b).await.unwrap();
+            let conv = core_a.dm_conversation(&core_b.local_identity().user_id);
+            let mut rx = core_b.subscribe();
+            let req = enigma_api::types::OutgoingMessageRequest {
+                client_message_id: enigma_api::types::MessageId::random(),
+                conversation_id: enigma_api::types::ConversationId {
+                    value: conv.value.clone(),
+                },
+                sender: enigma_api::types::UserIdHex {
+                    value: core_a.local_identity().user_id.to_hex(),
+                },
+                recipients: vec![enigma_api::types::OutgoingRecipient {
+                    recipient_user_id: Some(core_b.local_identity().user_id.to_hex()),
+                    recipient_handle: None,
+                }],
+                kind: enigma_api::types::MessageKind::Text,
+                text: Some("hello".to_string()),
+                attachment: None,
+                attachment_bytes: None,
+                ephemeral_expiry_secs: None,
+                metadata: None,
+            };
+            core_a.send_message(req).await.unwrap();
+            core_b.poll_once().await.unwrap();
+            let event = rx.recv().await.unwrap();
+            assert_eq!(event.text.as_deref(), Some("hello"));
+            let relay_client = RelayHttpClient::new(&cfg_a.relay).unwrap();
+            let recipient = core_b.local_identity().user_id.to_hex();
+            let pulled = relay_client.pull(&recipient, None).await.unwrap();
+            let ack_entries: Vec<RelayAck> = pulled
+                .items
+                .iter()
+                .map(|item| RelayAck {
+                    message_id: item.envelope.id,
+                    chunk_index: item.chunk_index,
+                })
+                .collect();
+            let ack_response = relay_client.ack(&recipient, &ack_entries).await.unwrap();
+            assert_eq!(ack_response.deleted, ack_entries.len() as u64);
+            let pulled_after = relay_client.pull(&recipient, None).await.unwrap();
+            assert!(pulled_after.items.is_empty());
+            let _ = running.shutdown.send(());
+            let _ = running.handle.await;
         })
-        .collect();
-    let ack_response = relay_client.ack(&recipient, &ack_entries).await.unwrap();
-    assert_eq!(ack_response.deleted, ack_entries.len() as u64);
-    let pulled_after = relay_client.pull(&recipient, None).await.unwrap();
-    assert!(pulled_after.items.is_empty());
-    let _ = running.shutdown.send(());
-    let _ = running.handle.await;
+        .await
 }
 
 pub(super) fn test_config(
