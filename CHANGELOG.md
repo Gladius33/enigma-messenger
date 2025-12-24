@@ -2,6 +2,7 @@
 
 ## Unreleased
 - CI and release automation scaffolding (fmt, clippy, tests, release builds)
+- Pinned Enigma crate versions and documented release governance (Step 12)
 
 ## 0.0.2
 - Relay 0.0.3 compatibility: chunk-aware pull/ack contract in the daemon HTTP client and integration tests
