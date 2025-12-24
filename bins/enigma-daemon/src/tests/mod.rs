@@ -7,7 +7,7 @@ use crate::config::{
 use enigma_core::directory::RegistryClient;
 use enigma_core::envelope_crypto::{decrypt_identity_envelope, requester_keypair};
 use enigma_core::policy::Policy;
-use enigma_core::relay::RelayClient;
+use enigma_core::relay::{RelayAck, RelayClient};
 use enigma_node_registry::config::{
     EnvelopeConfig as ServerEnvelopeConfig, EnvelopeKeyConfig, PresenceConfig,
     RateLimitConfig as ServerRateLimitConfig, RegistryConfig as ServerRegistryConfig, ServerMode,
@@ -270,11 +270,20 @@ async fn relay_integration_outbox() {
     let event = rx.recv().await.unwrap();
     assert_eq!(event.text.as_deref(), Some("hello"));
     let relay_client = RelayHttpClient::new(&cfg_a.relay).unwrap();
-    let pulled = relay_client
-        .pull(&core_b.local_identity().user_id.to_hex(), None)
-        .await
-        .unwrap();
-    assert!(pulled.envelopes.is_empty());
+    let recipient = core_b.local_identity().user_id.to_hex();
+    let pulled = relay_client.pull(&recipient, None).await.unwrap();
+    let ack_entries: Vec<RelayAck> = pulled
+        .items
+        .iter()
+        .map(|item| RelayAck {
+            message_id: item.envelope.id,
+            chunk_index: item.chunk_index,
+        })
+        .collect();
+    let ack_response = relay_client.ack(&recipient, &ack_entries).await.unwrap();
+    assert_eq!(ack_response.deleted, ack_entries.len() as u64);
+    let pulled_after = relay_client.pull(&recipient, None).await.unwrap();
+    assert!(pulled_after.items.is_empty());
     let _ = running.shutdown.send(());
     let _ = running.handle.await;
 }

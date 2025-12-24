@@ -60,7 +60,7 @@ async fn hybrid_falls_back_to_relay_when_p2p_fails() {
         .pull(&core_b.local_identity().user_id.to_hex(), None)
         .await
         .expect("pull");
-    assert!(!relay_entries.envelopes.is_empty());
+    assert!(!relay_entries.items.is_empty());
     core_b.poll_once().await.expect("poll");
     let event = rx_b.recv().await.expect("event");
     assert_eq!(event.text.as_deref(), Some("fallback"));
@@ -68,7 +68,7 @@ async fn hybrid_falls_back_to_relay_when_p2p_fails() {
         .pull(&core_b.local_identity().user_id.to_hex(), None)
         .await
         .expect("pull again");
-    assert!(remaining.envelopes.is_empty());
+    assert!(remaining.items.is_empty());
     let pending = core_a
         .outbox
         .load_all_due(crate::time::now_ms(), 4)

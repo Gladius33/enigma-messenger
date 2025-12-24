@@ -56,7 +56,7 @@ use packet::{
 };
 use policy::Policy;
 use receipts::ReceiptStore;
-use relay::{RelayClient, RelayGateway};
+use relay::{RelayAck, RelayClient, RelayGateway};
 use session::SessionManager;
 use std::collections::HashMap;
 #[cfg(test)]
@@ -588,14 +588,18 @@ impl Core {
 
     async fn process_relay(&self) -> Result<(), CoreError> {
         let pulled = self.relay.pull(&self.identity.user_id.to_hex()).await?;
-        let mut ack_ids = Vec::new();
-        for env in pulled.iter() {
+        let mut ack_entries = Vec::new();
+        for item in pulled.items.iter() {
+            let env = &item.envelope;
             match &env.kind {
                 RelayKind::OpaqueMessage(msg) => {
                     if let Ok(bytes) = STANDARD.decode(&msg.blob_b64) {
                         if self.persist_incoming(env.id, &bytes).await.is_ok() {
                             if self.handle_incoming_bytes(bytes, true).await.is_ok() {
-                                ack_ids.push(env.id);
+                                ack_entries.push(RelayAck {
+                                    message_id: env.id,
+                                    chunk_index: item.chunk_index,
+                                });
                             }
                         }
                     }
@@ -604,7 +608,10 @@ impl Core {
                     if let Ok(bytes) = STANDARD.decode(&chunk.blob_b64) {
                         if self.persist_incoming(env.id, &bytes).await.is_ok() {
                             if self.handle_incoming_bytes(bytes, true).await.is_ok() {
-                                ack_ids.push(env.id);
+                                ack_entries.push(RelayAck {
+                                    message_id: env.id,
+                                    chunk_index: item.chunk_index,
+                                });
                             }
                         }
                     }
@@ -612,10 +619,14 @@ impl Core {
                 RelayKind::OpaqueSignaling(_) => {}
             }
         }
-        if !ack_ids.is_empty() {
-            self.relay
-                .ack(&self.identity.user_id.to_hex(), &ack_ids)
+        if !ack_entries.is_empty() {
+            let ack_response = self
+                .relay
+                .ack(&self.identity.user_id.to_hex(), &ack_entries)
                 .await?;
+            if ack_response.deleted < ack_entries.len() as u64 {
+                return Err(CoreError::Relay("ack".to_string()));
+            }
         }
         Ok(())
     }

@@ -2,12 +2,11 @@ use crate::config::RelayConfig;
 use async_trait::async_trait;
 use base64::Engine;
 use enigma_core::error::CoreError;
-use enigma_core::relay::{RelayClient, RelayPullResult};
+use enigma_core::relay::{RelayAck, RelayAckResponse, RelayClient, RelayPullItem, RelayPullResult};
 use enigma_node_types::{RelayEnvelope, RelayKind, UserId};
 use enigma_relay::{AckEntry, AckRequest, MessageMeta, PullRequest, PushRequest};
 use reqwest::Response;
 use std::time::Duration;
-use uuid::Uuid;
 
 pub struct RelayHttpClient {
     base_url: String,
@@ -123,11 +122,11 @@ impl RelayClient for RelayHttpClient {
             .json()
             .await
             .map_err(|_| CoreError::Relay("pull_decode".to_string()))?;
-        let mut envelopes = Vec::new();
+        let mut items = Vec::new();
         for item in parsed.items.into_iter() {
             let to = UserId::from_hex(&item.recipient)
                 .map_err(|_| CoreError::Relay("recipient".to_string()))?;
-            envelopes.push(RelayEnvelope {
+            let envelope = RelayEnvelope {
                 id: item.message_id,
                 to,
                 from: None,
@@ -137,20 +136,24 @@ impl RelayClient for RelayHttpClient {
                     blob_b64: item.ciphertext_b64,
                     content_type: None,
                 }),
+            };
+            items.push(RelayPullItem {
+                envelope,
+                chunk_index: item.meta.chunk_index,
             });
         }
         Ok(RelayPullResult {
-            envelopes,
+            items,
             cursor: parsed.next_cursor,
         })
     }
 
-    async fn ack(&self, recipient: &str, ids: &[Uuid]) -> Result<(), CoreError> {
-        let ack_entries: Vec<AckEntry> = ids
+    async fn ack(&self, recipient: &str, ack: &[RelayAck]) -> Result<RelayAckResponse, CoreError> {
+        let ack_entries: Vec<AckEntry> = ack
             .iter()
-            .map(|id| AckEntry {
-                message_id: *id,
-                chunk_index: 0,
+            .map(|entry| AckEntry {
+                message_id: entry.message_id,
+                chunk_index: entry.chunk_index,
             })
             .collect();
         let payload = AckRequest {
@@ -165,7 +168,15 @@ impl RelayClient for RelayHttpClient {
             .send()
             .await
             .map_err(|_| CoreError::Relay("ack".to_string()))?;
-        self.map_response(resp, "ack")?;
-        Ok(())
+        let resp = self.map_response(resp, "ack")?;
+        let parsed: enigma_relay::AckResponse = resp
+            .json()
+            .await
+            .map_err(|_| CoreError::Relay("ack_decode".to_string()))?;
+        Ok(RelayAckResponse {
+            deleted: parsed.deleted,
+            missing: parsed.missing,
+            remaining: parsed.remaining,
+        })
     }
 }

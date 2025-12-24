@@ -4,7 +4,7 @@ use crate::directory::InMemoryRegistry;
 use crate::error::CoreError;
 use crate::messaging::MockTransport;
 use crate::policy::Policy;
-use crate::relay::{RelayClient, RelayPullResult};
+use crate::relay::{RelayAck, RelayAckResponse, RelayClient, RelayPullItem, RelayPullResult};
 use crate::Core;
 use async_trait::async_trait;
 use enigma_api::types::{
@@ -14,25 +14,24 @@ use enigma_node_types::RelayEnvelope;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use uuid::Uuid;
 
 #[derive(Clone, Default)]
 struct TrackingRelay {
-    entries: Arc<Mutex<Vec<RelayEnvelope>>>,
-    acked: Arc<Mutex<Vec<Uuid>>>,
+    entries: Arc<Mutex<Vec<RelayPullItem>>>,
+    acked: Arc<Mutex<Vec<RelayAck>>>,
 }
 
 impl TrackingRelay {
-    async fn acked(&self) -> Vec<Uuid> {
+    async fn acked(&self) -> Vec<RelayAck> {
         self.acked.lock().await.clone()
     }
 
-    async fn entries_for(&self, recipient: &str) -> Vec<RelayEnvelope> {
+    async fn entries_for(&self, recipient: &str) -> Vec<RelayPullItem> {
         self.entries
             .lock()
             .await
             .iter()
-            .filter(|env| env.to.to_hex() == recipient)
+            .filter(|env| env.envelope.to.to_hex() == recipient)
             .cloned()
             .collect()
     }
@@ -41,7 +40,14 @@ impl TrackingRelay {
 #[async_trait]
 impl RelayClient for TrackingRelay {
     async fn push(&self, envelope: RelayEnvelope) -> Result<(), CoreError> {
-        self.entries.lock().await.push(envelope);
+        let chunk_index = match &envelope.kind {
+            enigma_node_types::RelayKind::OpaqueAttachmentChunk(chunk) => chunk.index,
+            _ => 0,
+        };
+        self.entries.lock().await.push(RelayPullItem {
+            envelope,
+            chunk_index,
+        });
         Ok(())
     }
 
@@ -51,18 +57,31 @@ impl RelayClient for TrackingRelay {
         _cursor: Option<String>,
     ) -> Result<RelayPullResult, CoreError> {
         Ok(RelayPullResult {
-            envelopes: self.entries_for(recipient).await,
+            items: self.entries_for(recipient).await,
             cursor: None,
         })
     }
 
-    async fn ack(&self, recipient: &str, ids: &[Uuid]) -> Result<(), CoreError> {
+    async fn ack(&self, recipient: &str, ack: &[RelayAck]) -> Result<RelayAckResponse, CoreError> {
         let mut acked = self.acked.lock().await;
-        acked.extend_from_slice(ids);
+        acked.extend_from_slice(ack);
         drop(acked);
         let mut guard = self.entries.lock().await;
-        guard.retain(|env| env.to.to_hex() != recipient || !ids.contains(&env.id));
-        Ok(())
+        let before = guard.len() as u64;
+        guard.retain(|env| {
+            if env.envelope.to.to_hex() != recipient {
+                return true;
+            }
+            !ack.iter().any(|entry| {
+                entry.message_id == env.envelope.id && entry.chunk_index == env.chunk_index
+            })
+        });
+        let deleted = before.saturating_sub(guard.len() as u64);
+        Ok(RelayAckResponse {
+            deleted,
+            missing: ack.len().saturating_sub(deleted as usize) as u64,
+            remaining: guard.len() as u64,
+        })
     }
 }
 

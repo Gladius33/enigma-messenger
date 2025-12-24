@@ -61,5 +61,5 @@ async fn relay_pull_and_ack_flow() {
         .pull(&core_b.local_identity().user_id.to_hex(), None)
         .await
         .expect("pull");
-    assert!(remaining.envelopes.is_empty());
+    assert!(remaining.items.is_empty());
 }
