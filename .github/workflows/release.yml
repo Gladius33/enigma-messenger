@@ -11,39 +11,42 @@ env:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-
-      - name: cargo fmt
-        run: cargo fmt --all -- --check
-
-      - name: cargo clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
-
-      - name: cargo test (workspace)
-        run: cargo test
-
-      - name: cargo test (workspace all features)
-        run: cargo test --all-features
-
-      - name: cargo build --release
-        run: cargo build --release
-
-      - name: cargo build --release --all-features
-        run: cargo build --release --all-features
+      - name: release build
+        run: ./scripts/release_build.sh
+      - name: Install minisign
+        run: sudo apt-get update && sudo apt-get install -y minisign
+      - name: Sign checksums
+        if: env.MINISIGN_SECRET_KEY != ''
+        run: |
+          printf "%s" "$MINISIGN_SECRET_KEY" > /tmp/minisign.key
+          minisign -s /tmp/minisign.key -Sm dist/SHA256SUMS
+      - name: Mark unsigned checksums
+        if: env.MINISIGN_SECRET_KEY == ''
+        run: mv dist/SHA256SUMS dist/SHA256SUMS.unsigned
 
       - name: Upload enigma-daemon (linux)
         uses: actions/upload-artifact@v4
         with:
           name: enigma-daemon-linux
-          path: target/release/enigma-daemon
+          path: dist/enigma-daemon
           if-no-files-found: error
 
       - name: Upload enigma-cli (linux)
         uses: actions/upload-artifact@v4
         with:
           name: enigma-cli-linux
-          path: target/release/enigma-cli
+          path: dist/enigma-cli
+          if-no-files-found: error
+
+      - name: Upload dist artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-manifest
+          path: dist/
           if-no-files-found: error

@@ -24,6 +24,7 @@ Release process
 - Run the full CI command set locally.
 - Tag as vX.Y.Z and push; the release workflow builds artifacts for enigma-daemon and enigma-cli.
 - Manual publish (when ready): cargo publish -p enigma-api, then -p enigma-core, then binaries (enigma-daemon, enigma-cli) if distributing via crates.io.
+- Reproducible build and verification steps are documented in scripts/release_build.sh and docs/distribution.md.
 
 Feature matrix
 - Relay 0.0.3 ack/pull contract: cargo test -p enigma-daemon tests::relay_integration_outbox

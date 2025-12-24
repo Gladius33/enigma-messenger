@@ -29,7 +29,7 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: cargo clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   tests-core:
     runs-on: ubuntu-latest
@@ -38,9 +38,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: cargo test (enigma-core)
-        run: cargo test -p enigma-core
+        run: cargo test -p enigma-core --locked
       - name: cargo test (enigma-core sender-keys)
-        run: cargo test -p enigma-core --features sender-keys
+        run: cargo test -p enigma-core --locked --features sender-keys
 
   tests-daemon:
     runs-on: ubuntu-latest
@@ -49,9 +49,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: cargo test (enigma-daemon)
-        run: cargo test -p enigma-daemon
+        run: cargo test -p enigma-daemon --locked
       - name: cargo test (enigma-daemon all features)
-        run: cargo test -p enigma-daemon --all-features
+        run: cargo test -p enigma-daemon --locked --all-features
 
   tests-workspace:
     runs-on: ubuntu-latest
@@ -60,9 +60,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: cargo test (workspace)
-        run: cargo test
+        run: cargo test --locked
       - name: cargo test (workspace all features)
-        run: cargo test --all-features
+        run: cargo test --locked --all-features
 
   build:
     runs-on: ubuntu-latest
@@ -71,6 +71,21 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: cargo build --release
-        run: cargo build --release
+        run: cargo build --locked --release --workspace
       - name: cargo build --release --all-features
-        run: cargo build --release --all-features
+        run: cargo build --locked --release --workspace --all-features
+
+  supply-chain:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+      - name: cargo deny check
+        run: cargo deny check
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: cargo audit
+        run: cargo audit
