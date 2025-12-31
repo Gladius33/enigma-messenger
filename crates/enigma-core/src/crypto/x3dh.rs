@@ -5,6 +5,8 @@ use rand::rngs::OsRng;
 use sha2::Sha256;
 use x25519_dalek::{PublicKey as X25519Public, StaticSecret};
 
+const SPK_CONTEXT: &[u8] = b"enigma:x3dh:spk:v1";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum X3dhError {
     InvalidSignedPrekey,
@@ -182,8 +184,11 @@ fn verify_signed_prekey(bundle: &PreKeyBundlePublic) -> Result<(), X3dhError> {
     let verifying = VerifyingKey::from_bytes(&bundle.identity_signing)
         .map_err(|_| X3dhError::InvalidSignedPrekey)?;
     let sig = Signature::from_bytes(&bundle.signed_prekey_signature);
+    let mut message = Vec::with_capacity(SPK_CONTEXT.len() + bundle.signed_prekey.len());
+    message.extend_from_slice(SPK_CONTEXT);
+    message.extend_from_slice(&bundle.signed_prekey);
     verifying
-        .verify_strict(&bundle.signed_prekey, &sig)
+        .verify_strict(&message, &sig)
         .map_err(|_| X3dhError::InvalidSignedPrekey)
 }
 

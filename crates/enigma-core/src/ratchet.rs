@@ -98,14 +98,17 @@ impl RatchetState {
 
     pub fn new_responder(root_key: [u8; 32], dh_self: StaticSecret, dh_remote: [u8; 32]) -> Self {
         let dh_out = dh_self.diffie_hellman(&X25519Public::from(dh_remote));
-        let (root, _, recv_ck) = kdf_root(root_key, dh_out.as_bytes());
+        let (root, recv_ck, send_ck) = kdf_root(root_key, dh_out.as_bytes());
         Self {
             version: 2,
             root_key: root,
             dh_self: X25519Public::from(&dh_self).to_bytes(),
             dh_self_private: dh_self.to_bytes(),
             dh_remote,
-            sending_chain: None,
+            sending_chain: Some(ChainState {
+                key: send_ck,
+                index: 0,
+            }),
             receiving_chain: Some(ChainState {
                 key: recv_ck,
                 index: 0,
@@ -226,6 +229,10 @@ impl RatchetState {
         }
         self.receiving_chain = Some(chain);
         Ok(())
+    }
+
+    pub fn dh_self(&self) -> [u8; 32] {
+        self.dh_self
     }
 }
 

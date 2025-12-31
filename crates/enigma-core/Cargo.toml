@@ -1,6 +1,6 @@
 [package]
 name = "enigma-core"
-version = "0.0.2"
+version = "0.0.3"
 edition = "2021"
 authors = ["Sébastien TOUILLEUX (Gladius33)"]
 license = "MIT"
@@ -10,12 +10,13 @@ homepage = "https://github.com/gladius33/enigma-messenger"
 documentation = "https://docs.rs/enigma-core"
 
 [features]
-default = ["x3dh", "ratchet"]
+default = ["x3dh", "ratchet", "proto-v2"]
 dev = []
 sender-keys = []
 metrics = []
 x3dh = []
 ratchet = []
+proto-v2 = []
 
 [dependencies]
 serde = { workspace = true, features = ["derive"] }

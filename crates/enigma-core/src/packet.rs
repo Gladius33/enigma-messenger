@@ -1,6 +1,8 @@
 use crate::attachments::AttachmentChunk;
 use crate::error::CoreError;
 use crate::ids::DeviceId;
+#[cfg(feature = "proto-v2")]
+use crate::proto_v2::PacketV2;
 use enigma_aead::AeadKey;
 use enigma_api::types::{AttachmentDescriptor, MessageKind};
 use serde::{Deserialize, Serialize};
@@ -26,6 +28,8 @@ pub struct PlainMessage {
 #[serde(deny_unknown_fields)]
 pub enum WireEnvelope {
     Message(MessageFrame),
+    #[cfg(feature = "proto-v2")]
+    MessageV2(PacketV2),
     Attachment(AttachmentChunk),
 }
 

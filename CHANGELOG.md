@@ -5,6 +5,10 @@
 - Pinned Enigma crate versions and documented release governance (Step 12)
 - Reproducible release builds with checksums/signing hooks and supply-chain checks (Step 13)
 - Step 14: hardened registry/relay HTTP clients with retries and typed errors, structured daemon API errors, hermetic integration harnesses against enigma-node-registry 0.0.2 and enigma-relay 0.0.3, and production quickstart docs
+- Step 16: protocol V2 messaging with X3DH prekey bundles, double-ratchet framing, persisted sessions, proto-v2 feature flag, and dedicated tests
+
+## 0.0.3
+- Protocol V2 handshake and ratchet sessions with X3DH-derived keys and persisted state
 
 ## 0.0.2
 - Relay 0.0.3 compatibility: chunk-aware pull/ack contract in the daemon HTTP client and integration tests

@@ -17,6 +17,8 @@ pub mod node;
 pub mod outbox;
 pub mod packet;
 pub mod policy;
+#[cfg(feature = "proto-v2")]
+pub mod proto_v2;
 pub mod ratchet;
 pub mod receipts;
 pub mod relay;
@@ -30,6 +32,7 @@ mod introspection;
 #[cfg(feature = "dev")]
 pub use introspection::{CoreStats, RegistryStatus, StoreHealth};
 
+use crate::packet::format_kind;
 use attachments::{prepare_chunks, AttachmentAssembler};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
@@ -46,6 +49,8 @@ use enigma_storage::EncryptedStore;
 use error::CoreError;
 use event::{EventBus, EventReceiver};
 use groups::{GroupState, NullGroupCryptoProvider};
+#[cfg(feature = "proto-v2")]
+use identity::IdentityBundleV2;
 use identity::LocalIdentity;
 use ids::{conversation_id_for_dm, ConversationId, DeviceId, UserId};
 use messaging::{MockTransport, Transport};
@@ -56,6 +61,8 @@ use packet::{
     PlainMessage, WireEnvelope,
 };
 use policy::Policy;
+#[cfg(feature = "proto-v2")]
+use proto_v2::{DrHeader, PacketV2, ProtoV2Manager};
 use receipts::ReceiptStore;
 use relay::{RelayAck, RelayClient, RelayGateway};
 use session::SessionManager;
@@ -77,9 +84,6 @@ use group_crypto::{
 };
 
 #[cfg(feature = "sender-keys")]
-use packet::format_kind;
-
-#[cfg(feature = "sender-keys")]
 use policy::GroupCryptoMode;
 
 #[derive(Clone)]
@@ -89,6 +93,8 @@ pub struct Core {
     store: Arc<Mutex<EncryptedStore>>,
     identity: LocalIdentity,
     sessions: Arc<Mutex<SessionManager>>,
+    #[cfg(feature = "proto-v2")]
+    proto_v2: Arc<Mutex<ProtoV2Manager>>,
     attachments: Arc<Mutex<AttachmentAssembler>>,
     attachment_store: Arc<Mutex<HashMap<Uuid, Vec<u8>>>>,
     registry: Arc<dyn RegistryClient>,
@@ -125,6 +131,11 @@ impl Core {
         let store_arc = Arc::new(Mutex::new(store));
         let sessions = SessionManager::new(identity.user_id.clone(), store_arc.clone());
         let directory = ContactDirectory::new(store_arc.clone());
+        #[cfg(feature = "proto-v2")]
+        let proto_v2 = Arc::new(Mutex::new(ProtoV2Manager::new(
+            identity.clone(),
+            store_arc.clone(),
+        )));
 
         let pepper = registry.envelope_pepper().ok_or(CoreError::Crypto)?;
         let resolver: Arc<dyn DirectoryResolver> =
@@ -136,6 +147,8 @@ impl Core {
             store: store_arc.clone(),
             identity: identity.clone(),
             sessions: Arc::new(Mutex::new(sessions)),
+            #[cfg(feature = "proto-v2")]
+            proto_v2,
             attachments: Arc::new(Mutex::new(AttachmentAssembler::new())),
             attachment_store: Arc::new(Mutex::new(HashMap::new())),
             registry: registry.clone(),
@@ -228,7 +241,7 @@ impl Core {
         let sender_hex = request.sender.value.clone();
 
         for recipient in request.recipients.iter() {
-            let recipient_hex = self.resolve_recipient(recipient).await?;
+            let (recipient_hex, bundle_v2) = self.resolve_recipient_with_bundle(recipient).await?;
             let recipient_user = UserId::from_hex(&recipient_hex)
                 .ok_or(CoreError::Validation("recipient".to_string()))?;
 
@@ -254,11 +267,6 @@ impl Core {
             };
 
             for device_id in target_devices.iter() {
-                let key = {
-                    let mut sessions = self.sessions.lock().await;
-                    sessions.next_key(&recipient_user, device_id).await?
-                };
-
                 let plain = PlainMessage {
                     conversation_id: request.conversation_id.value.clone(),
                     message_id: request.client_message_id.value,
@@ -272,15 +280,40 @@ impl Core {
                     distribution_payload: None,
                 };
 
-                let frame = build_frame(
-                    plain,
-                    &key,
-                    self.identity.device_id.clone(),
-                    device_id.clone(),
-                )?;
+                let bytes = {
+                    #[cfg(feature = "proto-v2")]
+                    if let Some(bundle) = bundle_v2.as_ref() {
+                        if let Some(env) = self
+                            .try_encrypt_v2(&recipient_user, device_id, &plain, bundle)
+                            .await?
+                        {
+                            serialize_envelope(&env)?
+                        } else {
+                            Vec::new()
+                        }
+                    } else {
+                        Vec::new()
+                    }
+                    #[cfg(not(feature = "proto-v2"))]
+                    Vec::new()
+                };
 
-                let envelope = WireEnvelope::Message(frame);
-                let bytes = serialize_envelope(&envelope)?;
+                let bytes = if bytes.is_empty() {
+                    let key = {
+                        let mut sessions = self.sessions.lock().await;
+                        sessions.next_key(&recipient_user, device_id).await?
+                    };
+                    let frame = build_frame(
+                        plain.clone(),
+                        &key,
+                        self.identity.device_id.clone(),
+                        device_id.clone(),
+                    )?;
+                    let envelope = WireEnvelope::Message(frame);
+                    serialize_envelope(&envelope)?
+                } else {
+                    bytes
+                };
 
                 let outbox_id = Uuid::new_v4();
                 let item = OutboxItem {
@@ -706,6 +739,10 @@ impl Core {
                 }
                 self.handle_session_message(frame).await?;
             }
+            #[cfg(feature = "proto-v2")]
+            WireEnvelope::MessageV2(packet) => {
+                self.handle_session_message_v2(packet).await?;
+            }
             WireEnvelope::Attachment(chunk) => {
                 let mut assembler = self.attachments.lock().await;
                 if let Some(data) = assembler.ingest(chunk.clone()) {
@@ -737,6 +774,28 @@ impl Core {
         let mut sessions = self.sessions.lock().await;
         let key = sessions.next_key(&sender_user, &sender_device).await?;
         let message = decode_frame(&frame, &key)?;
+        self.handle_plain_message(message).await
+    }
+
+    #[cfg(feature = "proto-v2")]
+    async fn handle_session_message_v2(&self, packet: PacketV2) -> Result<(), CoreError> {
+        let sender_hex = packet
+            .sender
+            .clone()
+            .ok_or(CoreError::Validation("sender".to_string()))?;
+        let sender_user =
+            UserId::from_hex(&sender_hex).ok_or(CoreError::Validation("sender".to_string()))?;
+        let sender_device = packet
+            .target_device_id
+            .map(DeviceId::new)
+            .unwrap_or_else(DeviceId::nil);
+        let plaintext = {
+            let manager = self.proto_v2.clone();
+            let mut guard = manager.lock().await;
+            guard.decrypt(&sender_user, &sender_device, &packet).await?
+        };
+        let message: PlainMessage =
+            serde_json::from_slice(&plaintext).map_err(|_| CoreError::Crypto)?;
         self.handle_plain_message(message).await
     }
 
@@ -952,13 +1011,16 @@ impl Core {
         self.resolver = resolver;
     }
 
-    async fn resolve_recipient(&self, recipient: &OutgoingRecipient) -> Result<String, CoreError> {
+    async fn resolve_recipient_with_bundle(
+        &self,
+        recipient: &OutgoingRecipient,
+    ) -> Result<(String, Option<identity::IdentityBundleV2>), CoreError> {
         if let Some(user) = recipient.recipient_user_id.as_ref() {
             let trimmed = user.trim();
             if trimmed.is_empty() {
                 return Err(CoreError::Validation("recipient".to_string()));
             }
-            return Ok(trimmed.to_string());
+            return Ok((trimmed.to_string(), None));
         }
 
         if let Some(handle) = recipient.recipient_handle.as_ref() {
@@ -969,21 +1031,63 @@ impl Core {
             if let Some(contact) = self.directory.get_by_handle(handle_trimmed).await {
                 let fresh = now.saturating_sub(contact.last_resolved_ms) <= ttl_ms;
                 if fresh || !self.policy.directory_refresh_on_send {
-                    return Ok(contact.user_id);
+                    return Ok((contact.user_id, None));
                 }
             }
 
-            let (user_id, identity) = self.resolver.resolve_handle(handle_trimmed).await?;
+            let (user_id, identity, bundle) = self
+                .resolver
+                .resolve_handle_with_bundle(handle_trimmed)
+                .await?;
             let _ = self
                 .directory
                 .add_or_update_contact(handle_trimmed, &user_id, None, now)
                 .await;
 
             let _ = identity;
-            return Ok(user_id);
+            return Ok((user_id, bundle));
         }
 
         Err(CoreError::Validation("recipient".to_string()))
+    }
+
+    #[cfg(feature = "proto-v2")]
+    async fn try_encrypt_v2(
+        &self,
+        recipient_user: &UserId,
+        device_id: &DeviceId,
+        plain: &PlainMessage,
+        bundle: &IdentityBundleV2,
+    ) -> Result<Option<WireEnvelope>, CoreError> {
+        let manager = self.proto_v2.clone();
+        let mut guard = manager.lock().await;
+        let ad = format!(
+            "{}:{}:{}",
+            plain.conversation_id, plain.message_id, plain.sender
+        );
+        let plaintext = serde_json::to_vec(plain).map_err(|_| CoreError::Crypto)?;
+        let (cipher, prekey) = guard
+            .encrypt(recipient_user, device_id, bundle, &plaintext, ad.as_bytes())
+            .await?;
+        let header = DrHeader {
+            version: 2,
+            dh_pub: cipher.header.dh_pub,
+            pn: cipher.header.pn,
+            n: cipher.header.n,
+        };
+        let packet = PacketV2 {
+            conversation_id: plain.conversation_id.clone(),
+            message_id: plain.message_id,
+            kind: format_kind(&plain.kind),
+            header,
+            prekey,
+            ciphertext: cipher.ciphertext,
+            associated_data: ad.as_bytes().to_vec(),
+            device_id: Some(self.identity.device_id.as_uuid()),
+            target_device_id: Some(device_id.as_uuid()),
+            sender: Some(plain.sender.clone()),
+        };
+        Ok(Some(WireEnvelope::MessageV2(packet)))
     }
 
     async fn recipient_devices(&self, user_id: &str) -> Result<Vec<DeviceId>, CoreError> {

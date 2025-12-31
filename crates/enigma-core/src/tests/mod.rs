@@ -12,6 +12,8 @@ pub mod multidevice_tests;
 pub mod negative_tests;
 pub mod offline_relay_tests;
 pub mod outbox_retry_tests;
+#[cfg(feature = "proto-v2")]
+pub mod proto_v2_tests;
 pub mod relay_ack_persistence_tests;
 #[cfg(feature = "sender-keys")]
 pub mod sender_keys_tests;
