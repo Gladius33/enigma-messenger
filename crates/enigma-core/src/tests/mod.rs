@@ -4,6 +4,7 @@ pub mod envelope_tests;
 pub mod groups_channels_tests;
 pub mod hybrid_fallback_tests;
 pub mod identity_tests;
+pub mod identity_v2_tests;
 #[cfg(feature = "dev")]
 pub mod introspection_tests;
 pub mod messaging_tests;

@@ -169,7 +169,7 @@ async fn registry_integration_smoke() {
         &enigma_node_types::UserId::from_hex(&handle_hex).unwrap(),
     )
     .unwrap();
-    assert_eq!(identity.user_id.to_hex(), handle_hex);
+    assert_eq!(identity.public.user_id.to_hex(), handle_hex);
     running.stop().await;
 }
 
@@ -336,7 +336,7 @@ async fn registry_key_rotation_resilience() {
         &identity_user,
     )
     .unwrap();
-    assert_eq!(decrypted.user_id, identity_user);
+    assert_eq!(decrypted.public.user_id, identity_user);
     second.stop().await;
 }
 

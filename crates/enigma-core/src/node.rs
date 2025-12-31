@@ -1,6 +1,7 @@
 use crate::directory::RegistryClient;
 use crate::envelope_crypto::{decrypt_identity_envelope, requester_keypair};
 use crate::error::CoreError;
+use crate::identity::{parse_identity_bundle, IdentityBundleV2};
 use crate::time::now_ms;
 use async_trait::async_trait;
 use enigma_node_types::{Presence, PublicIdentity, UserId};
@@ -9,6 +10,13 @@ use std::sync::Arc;
 #[async_trait]
 pub trait DirectoryResolver: Send + Sync {
     async fn resolve_handle(&self, handle: &str) -> Result<(String, PublicIdentity), CoreError>;
+    async fn resolve_handle_with_bundle(
+        &self,
+        handle: &str,
+    ) -> Result<(String, PublicIdentity, Option<IdentityBundleV2>), CoreError> {
+        let (id, identity) = self.resolve_handle(handle).await?;
+        Ok((id, identity.clone(), parse_identity_bundle(&identity)))
+    }
     async fn check_user(&self, handle: &str) -> Result<bool, CoreError>;
     async fn announce_presence(&self, identity: &PublicIdentity) -> Result<(), CoreError>;
 
@@ -29,6 +37,21 @@ pub struct RegistryDirectoryResolver {
 impl RegistryDirectoryResolver {
     pub fn new(registry: Arc<dyn RegistryClient>, pepper: [u8; 32]) -> Self {
         Self { registry, pepper }
+    }
+
+    async fn resolve_full(
+        &self,
+        handle: &str,
+    ) -> Result<(UserId, PublicIdentity, Option<IdentityBundleV2>), CoreError> {
+        let user_id = Self::resolve_handle_to_user_id(handle)?;
+        let (secret, pubkey) = requester_keypair();
+        let envelope = self.registry.resolve(&user_id.to_hex(), pubkey).await?;
+        let Some(env) = envelope else {
+            return Err(CoreError::NotFound);
+        };
+        let resolved = decrypt_identity_envelope(self.pepper, &env, secret, &user_id)
+            .map_err(|_| CoreError::Crypto)?;
+        Ok((user_id, resolved.public, resolved.bundle))
     }
 
     fn normalize_handle(handle: &str) -> Result<String, CoreError> {
@@ -52,19 +75,16 @@ impl RegistryDirectoryResolver {
 #[async_trait]
 impl DirectoryResolver for RegistryDirectoryResolver {
     async fn resolve_handle(&self, handle: &str) -> Result<(String, PublicIdentity), CoreError> {
-        let user_id = Self::resolve_handle_to_user_id(handle)?;
-        let (secret, pubkey) = requester_keypair();
-
-        let envelope = self.registry.resolve(&user_id.to_hex(), pubkey).await?;
-
-        let Some(env) = envelope else {
-            return Err(CoreError::NotFound);
-        };
-
-        let identity = decrypt_identity_envelope(self.pepper, &env, secret, &user_id)
-            .map_err(|_| CoreError::Crypto)?;
-
+        let (user_id, identity, _) = self.resolve_full(handle).await?;
         Ok((user_id.to_hex(), identity))
+    }
+
+    async fn resolve_handle_with_bundle(
+        &self,
+        handle: &str,
+    ) -> Result<(String, PublicIdentity, Option<IdentityBundleV2>), CoreError> {
+        let (user_id, identity, bundle) = self.resolve_full(handle).await?;
+        Ok((user_id.to_hex(), identity, bundle))
     }
 
     async fn check_user(&self, handle: &str) -> Result<bool, CoreError> {

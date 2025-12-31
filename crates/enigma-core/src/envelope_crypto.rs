@@ -1,3 +1,4 @@
+use crate::identity::{parse_identity_bundle, IdentityBundleV2};
 use blake3::Hasher;
 use enigma_node_registry::envelope::{EnvelopePublicKey, IdentityEnvelope};
 use enigma_node_types::{PublicIdentity, UserId};
@@ -52,7 +53,7 @@ pub fn decrypt_identity_envelope(
     envelope: &IdentityEnvelope,
     requester_secret: [u8; 32],
     handle: &UserId,
-) -> Result<PublicIdentity, EnvelopeCryptoError> {
+) -> Result<ResolvedIdentity, EnvelopeCryptoError> {
     let requester = StaticSecret::from(requester_secret);
     let shared = requester.diffie_hellman(&PublicKey::from(envelope.sender_pubkey));
     let aead_key = derive_aead_key(pepper, handle.as_bytes(), shared.as_bytes());
@@ -68,7 +69,15 @@ pub fn decrypt_identity_envelope(
     identity
         .validate()
         .map_err(|_| EnvelopeCryptoError::InvalidEnvelope)?;
-    Ok(identity)
+    Ok(ResolvedIdentity {
+        public: identity.clone(),
+        bundle: parse_identity_bundle(&identity),
+    })
+}
+
+pub struct ResolvedIdentity {
+    pub public: PublicIdentity,
+    pub bundle: Option<IdentityBundleV2>,
 }
 
 fn parse_public_key(key: &EnvelopePublicKey) -> Result<([u8; 8], [u8; 32]), EnvelopeCryptoError> {
@@ -162,6 +171,6 @@ mod tests {
         let decrypted =
             decrypt_identity_envelope([3u8; 32], &envelope, req_secret, &identity.user_id)
                 .expect("decrypt");
-        assert_eq!(decrypted.user_id, identity.user_id);
+        assert_eq!(decrypted.public.user_id, identity.user_id);
     }
 }

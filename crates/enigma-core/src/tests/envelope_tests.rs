@@ -44,7 +44,7 @@ async fn register_stores_ciphertext() {
         &user,
     )
     .expect("decrypt");
-    assert_eq!(decrypted.user_id.to_hex(), user.to_hex());
+    assert_eq!(decrypted.public.user_id.to_hex(), user.to_hex());
 }
 
 #[tokio::test]
@@ -79,7 +79,7 @@ async fn resolve_envelope_roundtrip() {
     )
     .expect("decrypt");
     assert_eq!(
-        decrypted.user_id,
+        decrypted.public.user_id,
         core.local_identity().public_identity.user_id
     );
 }

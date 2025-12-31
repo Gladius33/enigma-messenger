@@ -1,6 +1,6 @@
 [package]
 name = "enigma-core"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2021"
 authors = ["Sébastien TOUILLEUX (Gladius33)"]
 license = "MIT"
@@ -10,10 +10,12 @@ homepage = "https://github.com/gladius33/enigma-messenger"
 documentation = "https://docs.rs/enigma-core"
 
 [features]
-default = []
+default = ["x3dh", "ratchet"]
 dev = []
 sender-keys = []
 metrics = []
+x3dh = []
+ratchet = []
 
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
@@ -36,3 +38,6 @@ enigma-node-types = { workspace = true }
 enigma-aead = { version = "=0.1.1" }
 enigma-storage = { workspace = true }
 enigma-node-registry = { workspace = true, default-features = false }
+
+[dev-dependencies]
+tempfile = "3"
