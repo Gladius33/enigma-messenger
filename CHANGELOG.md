@@ -8,6 +8,7 @@
 - Step 16: protocol V2 messaging with X3DH prekey bundles, double-ratchet framing, persisted sessions, proto-v2 feature flag, and dedicated tests
 - Step 18: daemon UI API v1 freeze with enigma-ui-api DTOs, structured envelopes, optional auth, and contract tests for contacts/conversations/sync
 - Step 19: production packaging with /etc/enigma templates, hardened systemd units, enigma-cli doctor/default-config commands, musl release artifacts, and deployment docs
+- Step 20: compatibility policy and migration framework (store version stamping, CLI migrate/doctor JSON output, UI error snapshot), CI guardrails for pinned versions/docs, and compatibility/migrations docs
 
 ## 0.0.3
 - Protocol V2 handshake and ratchet sessions with X3DH-derived keys and persisted state

@@ -13,6 +13,7 @@ pub mod groups;
 pub mod identity;
 pub mod ids;
 pub mod messaging;
+pub mod migrations;
 pub mod node;
 pub mod outbox;
 pub mod packet;
@@ -55,6 +56,7 @@ use identity::LocalIdentity;
 use ids::{conversation_id_for_dm, ConversationId, DeviceId, UserId};
 use messaging::{MockTransport, Transport};
 use node::{DirectoryResolver, RegistryDirectoryResolver};
+use outbox::OUTBOX_VERSION;
 use outbox::{Outbox, OutboxItem};
 use packet::{
     build_frame, decode_frame, deserialize_envelope, serialize_envelope, MessageFrame,
@@ -74,6 +76,8 @@ use std::time::Duration;
 use time::now_ms;
 use tokio::sync::Mutex;
 use uuid::Uuid;
+
+pub const CORE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[cfg(feature = "sender-keys")]
 use group_crypto::{
@@ -317,6 +321,7 @@ impl Core {
 
                 let outbox_id = Uuid::new_v4();
                 let item = OutboxItem {
+                    version: OUTBOX_VERSION,
                     id: outbox_id,
                     message_id: request.client_message_id.value.to_string(),
                     created_at_ms: now_ms(),
@@ -346,6 +351,7 @@ impl Core {
 
                             let att_id = Uuid::new_v4();
                             let att_item = OutboxItem {
+                                version: OUTBOX_VERSION,
                                 id: att_id,
                                 message_id: request.client_message_id.value.to_string(),
                                 created_at_ms: now_ms(),
@@ -477,6 +483,7 @@ impl Core {
 
                 let outbox_id = Uuid::new_v4();
                 let item = OutboxItem {
+                    version: OUTBOX_VERSION,
                     id: outbox_id,
                     message_id: request.client_message_id.value.to_string(),
                     created_at_ms: now_ms(),
@@ -563,6 +570,7 @@ impl Core {
             for device in target_devices.into_iter() {
                 let outbox_id = Uuid::new_v4();
                 let item = OutboxItem {
+                    version: OUTBOX_VERSION,
                     id: outbox_id,
                     message_id: request.client_message_id.value.to_string(),
                     created_at_ms: now_ms(),
@@ -599,6 +607,7 @@ impl Core {
                         for device in target_devices.into_iter() {
                             let att_id = Uuid::new_v4();
                             let att_item = OutboxItem {
+                                version: OUTBOX_VERSION,
                                 id: att_id,
                                 message_id: request.client_message_id.value.to_string(),
                                 created_at_ms: now_ms(),

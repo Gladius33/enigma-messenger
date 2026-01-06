@@ -9,8 +9,12 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
+pub const OUTBOX_VERSION: u8 = 2;
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct OutboxItem {
+    #[serde(default = "default_outbox_version")]
+    pub version: u8,
     pub id: Uuid,
     pub message_id: String,
     pub created_at_ms: u64,
@@ -21,6 +25,10 @@ pub struct OutboxItem {
     pub packet: Vec<u8>,
     #[serde(default)]
     pub recipient_device_id: Option<DeviceId>,
+}
+
+fn default_outbox_version() -> u8 {
+    1
 }
 
 #[derive(Clone)]

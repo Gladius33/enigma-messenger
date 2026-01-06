@@ -1,6 +1,6 @@
 [package]
 name = "enigma-cli"
-version = "0.0.2"
+version = "0.0.3"
 edition = "2021"
 authors = ["Sébastien TOUILLEUX (Gladius33)"]
 license = "MIT"
@@ -10,8 +10,12 @@ homepage = "https://github.com/gladius33/enigma-messenger"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
-enigma-daemon = { path = "../enigma-daemon", version = "0.0.3" }
+enigma-core = { path = "../../crates/enigma-core", version = "0.0.4", default-features = false, features = ["proto-v2"] }
+enigma-daemon = { path = "../enigma-daemon", version = "0.0.4" }
+enigma-ui-api = { path = "../../crates/enigma-ui-api", version = "0.0.1" }
+enigma-storage = { workspace = true }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }

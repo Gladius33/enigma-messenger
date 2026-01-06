@@ -8,6 +8,7 @@ pub mod identity_v2_tests;
 #[cfg(feature = "dev")]
 pub mod introspection_tests;
 pub mod messaging_tests;
+pub mod migrations_tests;
 pub mod multidevice_tests;
 pub mod negative_tests;
 pub mod offline_relay_tests;

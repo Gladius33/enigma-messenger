@@ -106,6 +106,7 @@ level = "info"
 - Config templates are published under `deployment/etc/enigma/` and can be emitted from the binary with `enigma-cli print-default-config --service daemon`.
 - Validate deployments with `enigma-cli doctor --config /etc/enigma/daemon.toml`; it checks config validity, permissions on `/var/lib/enigma`, and `/api/v1/health`.
 - Hardened systemd units for the registry, relay, and daemon live in `systemd/` and are documented in `deployment/single-node-prod.md`.
+- Compatibility and migration policy is documented in `COMPATIBILITY.md`; store migrations and CLI workflows live in `MIGRATIONS.md`.
 
 How to run CI locally
 - cargo fmt --all -- --check

@@ -171,3 +171,52 @@ async fn ui_errors_are_structured() {
     let _ = tx.send(());
     let _ = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;
 }
+
+#[tokio::test]
+async fn ui_error_envelope_matches_snapshot() {
+    let cfg = test_config(false, false, false);
+    let state = build_state(&cfg).await;
+    let api_addr = cfg.api.socket_addr().unwrap();
+    let (addr, tx, handle) = start_server(state.clone(), api_addr).await;
+    let resp = dispatch_request(
+        state.clone(),
+        addr,
+        build_request("GET", "/api/v1/does-not-exist", None),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let body: serde_json::Value = serde_json::from_slice(&body_bytes(resp).await).unwrap();
+    let mut normalized = body.clone();
+    if let Some(obj) = normalized.as_object_mut() {
+        obj.entry("data").or_insert(serde_json::Value::Null);
+    }
+    if let Some(meta) = normalized.get_mut("meta").and_then(|m| m.as_object_mut()) {
+        meta.insert(
+            "request_id".to_string(),
+            serde_json::Value::String("request".to_string()),
+        );
+        meta.insert(
+            "timestamp_ms".to_string(),
+            serde_json::Value::Number(0.into()),
+        );
+    }
+    if let Some(error) = normalized.get_mut("error").and_then(|e| e.as_object_mut()) {
+        error.entry("details").or_insert(serde_json::Value::Null);
+    }
+    let expected = serde_json::json!({
+        "meta": {
+            "api_version": enigma_ui_api::API_VERSION,
+            "request_id": "request",
+            "timestamp_ms": 0
+        },
+        "data": serde_json::Value::Null,
+        "error": {
+            "code": "NOT_FOUND",
+            "message": "not found",
+            "details": serde_json::Value::Null
+        }
+    });
+    assert_eq!(normalized, expected);
+    let _ = tx.send(());
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;
+}
