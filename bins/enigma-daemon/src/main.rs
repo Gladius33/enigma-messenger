@@ -19,6 +19,11 @@ use enigma_sfu::{
 };
 use enigma_storage::key_provider::{KeyProvider, MasterKey};
 use enigma_storage::EnigmaStorageError;
+use enigma_ui_api::{
+    ApiError, ApiMeta, ApiResponse, ContactDto, ConversationDto, ConversationKind, DeviceInfo,
+    Event, IdentityInfo, MessageDto, MessageStatus, SendMessageRequest, SendMessageResponse,
+    SyncRequest, SyncResponse, API_VERSION,
+};
 use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
 use hyper::header::CONTENT_TYPE;
@@ -39,7 +44,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::net::TcpListener;
 use tokio::signal;
 use tokio::sync::oneshot;
+use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
+use url::form_urlencoded;
 
 #[derive(Clone)]
 struct DaemonKey;
@@ -62,6 +69,9 @@ struct DaemonState {
     call_manager: CallManager,
     calls_enabled: bool,
     calls_policy: CallsPolicy,
+    ui_messages: Arc<Mutex<HashMap<String, Vec<MessageDto>>>>,
+    ui_events: Arc<Mutex<UiEvents>>,
+    ui_conversations: Arc<Mutex<HashMap<String, UiConversationEntry>>>,
 }
 
 #[derive(Clone)]
@@ -106,6 +116,9 @@ async fn main() -> Result<(), DaemonError> {
         call_manager,
         calls_enabled,
         calls_policy,
+        ui_messages: Arc::new(Mutex::new(HashMap::new())),
+        ui_events: Arc::new(Mutex::new(UiEvents::new())),
+        ui_conversations: Arc::new(Mutex::new(HashMap::new())),
     };
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let (_addr, server) = start_control_server(state, shutdown_rx).await?;
@@ -252,6 +265,9 @@ async fn handle_request(
     state: DaemonState,
     req: Request<Incoming>,
 ) -> Result<Response<Full<Bytes>>, hyper::Error> {
+    if req.uri().path().starts_with("/api/") {
+        return handle_ui_request(state, req).await;
+    }
     if req.method().as_str() == "GET" && req.uri().path() == "/health" {
         return Ok(Response::new(Full::from(
             serde_json::json!({"status":"ok"}).to_string(),
@@ -744,6 +760,29 @@ async fn parse_body<T: DeserializeOwned>(
     }
 }
 
+async fn parse_ui_body<T: DeserializeOwned>(
+    body: Incoming,
+) -> Result<Result<T, Response<Full<Bytes>>>, hyper::Error> {
+    let bytes = collect_bytes(body).await?;
+    if bytes.is_empty() {
+        return Ok(Err(ui_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_BODY",
+            "empty body",
+            None,
+        )));
+    }
+    match serde_json::from_slice(&bytes) {
+        Ok(parsed) => Ok(Ok(parsed)),
+        Err(_) => Ok(Err(ui_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_BODY",
+            "invalid json",
+            None,
+        ))),
+    }
+}
+
 type BoxedResponse = Box<Response<Full<Bytes>>>;
 
 fn parse_room_id(value: &str) -> Result<RoomId, BoxedResponse> {
@@ -756,6 +795,492 @@ fn parse_participant_id(value: &str) -> Result<ParticipantId, BoxedResponse> {
 
 fn parse_track_id(value: &str) -> Result<TrackId, BoxedResponse> {
     TrackId::from_str(value).map_err(|err| Box::new(sfu_error_response(err)))
+}
+
+async fn handle_ui_request(
+    state: DaemonState,
+    req: Request<Incoming>,
+) -> Result<Response<Full<Bytes>>, hyper::Error> {
+    if cfg!(feature = "ui-auth") {
+        if let Ok(expected) = std::env::var("ENIGMA_UI_TOKEN") {
+            let auth = req
+                .headers()
+                .get("authorization")
+                .and_then(|h| h.to_str().ok())
+                .unwrap_or("");
+            let valid = auth
+                .strip_prefix("Bearer ")
+                .map(|v| v == expected)
+                .unwrap_or(false);
+            if !valid {
+                return Ok(ui_error(
+                    StatusCode::UNAUTHORIZED,
+                    "UNAUTHORIZED",
+                    "missing or invalid token",
+                    None,
+                ));
+            }
+        }
+    }
+    let path = req.uri().path().trim_end_matches('/');
+    if path == "/api/v1" || path == "/api/v1/" {
+        return Ok(ui_ok(serde_json::json!({"status":"ok"})));
+    }
+    if path == "/api/v1/health" {
+        return Ok(ui_ok(serde_json::json!({"status":"ok"})));
+    }
+    if path == "/api/v1/identity" && req.method() == hyper::Method::GET {
+        let id = state.core.local_identity();
+        let devices = vec![DeviceInfo {
+            device_id: id.device_id.as_uuid().to_string(),
+            last_seen_ms: now_ms(),
+        }];
+        let info = IdentityInfo {
+            user_id: id.user_id.to_hex(),
+            handle: id.username_hint.clone(),
+            devices,
+            has_bundle_v2: id.x3dh_bundle().is_some(),
+            created_ms: id.public_identity.created_at_ms,
+        };
+        return Ok(ui_ok(info));
+    }
+    if path == "/api/v1/contacts/add" && req.method() == hyper::Method::POST {
+        let parsed = parse_ui_body::<UiContactPayload>(req.into_body()).await?;
+        let payload = match parsed {
+            Ok(p) => p,
+            Err(resp) => return Ok(resp),
+        };
+        let user_id = match parse_ui_user_id(payload.handle.clone(), payload.user_id.clone()) {
+            Ok(id) => id,
+            Err(resp) => return Ok(*resp),
+        };
+        let contact = match state
+            .core
+            .ui_add_contact(
+                payload.handle.unwrap_or_else(|| user_id.clone()),
+                user_id.clone(),
+                payload.display_name.clone(),
+            )
+            .await
+        {
+            Ok(c) => c,
+            Err(_) => {
+                return Ok(ui_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "CONTACT_ERROR",
+                    "failed",
+                    None,
+                ))
+            }
+        };
+        let dto = ContactDto {
+            user_id: contact.user_id.clone(),
+            handle: contact.handle.clone(),
+            display_name: contact.alias.clone(),
+            last_seen_ms: contact.last_resolved_ms,
+        };
+        {
+            let mut events = state.ui_events.lock().await;
+            events.push(Event::ContactAdded(dto.clone()));
+        }
+        return Ok(ui_ok(dto));
+    }
+    if path == "/api/v1/contacts" && req.method() == hyper::Method::GET {
+        let contacts = state.core.ui_contacts().await;
+        let dtos: Vec<ContactDto> = contacts
+            .into_iter()
+            .map(|c| ContactDto {
+                user_id: c.user_id,
+                handle: c.handle,
+                display_name: c.alias,
+                last_seen_ms: c.last_resolved_ms,
+            })
+            .collect();
+        return Ok(ui_ok(dtos));
+    }
+    if path == "/api/v1/conversations/create" && req.method() == hyper::Method::POST {
+        let parsed = parse_ui_body::<UiConversationPayload>(req.into_body()).await?;
+        let payload = match parsed {
+            Ok(p) => p,
+            Err(resp) => return Ok(resp),
+        };
+        let peer_id = match parse_ui_user_id(payload.handle, payload.user_id) {
+            Ok(id) => id,
+            Err(resp) => return Ok(*resp),
+        };
+        let user = match enigma_core::ids::UserId::from_hex(&peer_id) {
+            Some(u) => u,
+            None => {
+                return Ok(ui_error(
+                    StatusCode::BAD_REQUEST,
+                    "INVALID_USER",
+                    "invalid user",
+                    None,
+                ))
+            }
+        };
+        let conv = state.core.dm_conversation(&user);
+        let title = payload.title.clone();
+        {
+            let mut map = state.ui_conversations.lock().await;
+            map.insert(
+                conv.value.clone(),
+                UiConversationEntry {
+                    peer_user_id: peer_id.clone(),
+                    title: title.clone(),
+                },
+            );
+        }
+        let dto = ConversationDto {
+            id: conv.value.clone(),
+            kind: ConversationKind::Direct,
+            title,
+            members: vec![peer_id.clone()],
+            unread_count: 0,
+            last_message: None,
+        };
+        return Ok(ui_ok(dto));
+    }
+    if path == "/api/v1/conversations" && req.method() == hyper::Method::GET {
+        let map = state.ui_conversations.lock().await;
+        let convs: Vec<ConversationDto> = map
+            .iter()
+            .map(|(id, entry)| ConversationDto {
+                id: id.clone(),
+                kind: ConversationKind::Direct,
+                title: entry.title.clone(),
+                members: vec![entry.peer_user_id.clone()],
+                unread_count: 0,
+                last_message: None,
+            })
+            .collect();
+        return Ok(ui_ok(convs));
+    }
+    if path.starts_with("/api/v1/conversations/") && req.method() == hyper::Method::GET {
+        let segments: Vec<&str> = path.split('/').collect();
+        if segments.len() == 6 && segments[3] == "conversations" && segments[5] == "messages" {
+            let conv_id = segments[4];
+            let query = req.uri().query().unwrap_or("");
+            let mut cursor: Option<u64> = None;
+            let mut limit: usize = 50;
+            for (k, v) in form_urlencoded::parse(query.as_bytes()) {
+                if k == "cursor" {
+                    if let Ok(val) = v.parse::<u64>() {
+                        cursor = Some(val);
+                    }
+                } else if k == "limit" {
+                    if let Ok(val) = v.parse::<usize>() {
+                        limit = val;
+                    }
+                }
+            }
+            let messages = {
+                let mut store = state.ui_messages.lock().await;
+                let list = store.entry(conv_id.to_string()).or_default();
+                let start = cursor.unwrap_or(0) as usize;
+                if start >= list.len() {
+                    return Ok(ui_ok(Vec::<MessageDto>::new()));
+                }
+                let end = (start + limit).min(list.len());
+                list[start..end].to_vec()
+            };
+            return Ok(ui_ok(messages));
+        }
+    }
+    if path == "/api/v1/messages/send" && req.method() == hyper::Method::POST {
+        let parsed = parse_ui_body::<SendMessageRequest>(req.into_body()).await?;
+        let payload = match parsed {
+            Ok(p) => p,
+            Err(resp) => return Ok(resp),
+        };
+        let peer = {
+            let map = state.ui_conversations.lock().await;
+            map.get(&payload.conversation_id).cloned()
+        };
+        let peer = match peer {
+            Some(p) => p,
+            None => {
+                return Ok(ui_error(
+                    StatusCode::BAD_REQUEST,
+                    "UNKNOWN_CONVERSATION",
+                    "unknown conversation",
+                    None,
+                ))
+            }
+        };
+        let kind = match parse_ui_message_kind(&payload.kind) {
+            Ok(k) => k,
+            Err(resp) => return Ok(*resp),
+        };
+        let msg_id = enigma_api::types::MessageId::random();
+        let req_core = enigma_api::types::OutgoingMessageRequest {
+            client_message_id: msg_id.clone(),
+            conversation_id: enigma_api::types::ConversationId {
+                value: payload.conversation_id.clone(),
+            },
+            sender: enigma_api::types::UserIdHex {
+                value: state.core.local_identity().user_id.to_hex(),
+            },
+            recipients: vec![enigma_api::types::OutgoingRecipient {
+                recipient_user_id: Some(peer.peer_user_id.clone()),
+                recipient_handle: None,
+            }],
+            kind: kind.clone(),
+            text: payload.body.clone(),
+            attachment: None,
+            attachment_bytes: None,
+            ephemeral_expiry_secs: None,
+            metadata: None,
+        };
+        let send_res = state.core.send_message(req_core).await;
+        if send_res.is_err() {
+            return Ok(ui_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "SEND_FAILED",
+                "failed to send",
+                None,
+            ));
+        }
+        let dto = MessageDto {
+            id: msg_id.value.to_string(),
+            conversation_id: payload.conversation_id.clone(),
+            sender: state.core.local_identity().user_id.to_hex(),
+            sent_ms: now_ms(),
+            edited_ms: None,
+            kind: ui_kind_label(&kind).to_string(),
+            body_preview: payload.body.clone(),
+            attachments_meta: None,
+            status: MessageStatus::Sent,
+        };
+        store_message(&state, dto.clone()).await;
+        let resp = SendMessageResponse {
+            message_id: msg_id.value.to_string(),
+            status: MessageStatus::Sent,
+        };
+        return Ok(ui_ok(resp));
+    }
+    if path == "/api/v1/sync" && req.method() == hyper::Method::POST {
+        let parsed = parse_ui_body::<SyncRequest>(req.into_body()).await?;
+        let payload = match parsed {
+            Ok(p) => p,
+            Err(resp) => return Ok(resp),
+        };
+        let limit = payload.limit.unwrap_or(50);
+        let (events, next) = {
+            let log = state.ui_events.lock().await;
+            log.since(payload.cursor, limit)
+        };
+        let resp = SyncResponse {
+            events,
+            next_cursor: next,
+        };
+        return Ok(ui_ok(resp));
+    }
+    if path == "/api/v1/stats" && req.method() == hyper::Method::GET {
+        let stats = state.core.stats().await;
+        let body = serde_json::json!({
+            "user_id_hex": stats.user_id_hex,
+            "device_id": stats.device_id.to_string(),
+            "conversations": stats.conversations,
+            "groups": stats.groups,
+            "channels": stats.channels,
+            "pending_outbox": stats.pending_outbox,
+            "directory_len": stats.directory_len
+        });
+        return Ok(ui_ok(body));
+    }
+    Ok(ui_error(
+        StatusCode::NOT_FOUND,
+        "NOT_FOUND",
+        "not found",
+        None,
+    ))
+}
+
+fn ui_meta() -> ApiMeta {
+    ApiMeta {
+        api_version: API_VERSION,
+        request_id: uuid::Uuid::new_v4(),
+        timestamp_ms: now_ms(),
+    }
+}
+
+fn ui_ok<T: serde::Serialize>(data: T) -> Response<Full<Bytes>> {
+    let resp = ApiResponse {
+        meta: ui_meta(),
+        data: Some(data),
+        error: None,
+    };
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, "application/json")
+        .body(Full::from(serde_json::to_string(&resp).unwrap()))
+        .unwrap()
+}
+
+fn ui_error(
+    status: StatusCode,
+    code: &str,
+    message: impl Into<String>,
+    details: Option<serde_json::Value>,
+) -> Response<Full<Bytes>> {
+    let resp: ApiResponse<serde_json::Value> = ApiResponse {
+        meta: ui_meta(),
+        data: None,
+        error: Some(ApiError {
+            code: code.to_string(),
+            message: message.into(),
+            details,
+        }),
+    };
+    Response::builder()
+        .status(status)
+        .header(CONTENT_TYPE, "application/json")
+        .body(Full::from(serde_json::to_string(&resp).unwrap()))
+        .unwrap()
+}
+
+async fn store_message(state: &DaemonState, message: MessageDto) {
+    {
+        let mut map = state.ui_messages.lock().await;
+        map.entry(message.conversation_id.clone())
+            .or_default()
+            .push(message.clone());
+    }
+    let mut events = state.ui_events.lock().await;
+    events.push(Event::Message(message));
+}
+
+#[derive(Clone)]
+struct UiConversationEntry {
+    peer_user_id: String,
+    title: Option<String>,
+}
+
+#[derive(Default)]
+struct UiEvents {
+    cursor: u64,
+    events: Vec<(u64, Event)>,
+}
+
+impl UiEvents {
+    fn new() -> Self {
+        Self {
+            cursor: 0,
+            events: Vec::new(),
+        }
+    }
+
+    fn push(&mut self, event: Event) {
+        self.cursor = self.cursor.saturating_add(1);
+        self.events.push((self.cursor, event));
+    }
+
+    fn since(&self, cursor: Option<u64>, limit: usize) -> (Vec<Event>, Option<u64>) {
+        let start = cursor.unwrap_or(0);
+        let mut collected = Vec::new();
+        let mut next = None;
+        for (idx, ev) in self.events.iter() {
+            if *idx > start {
+                collected.push(ev.clone());
+                if collected.len() >= limit {
+                    next = Some(*idx);
+                    break;
+                }
+            }
+        }
+        if next.is_none() {
+            if let Some(last) = self.events.last() {
+                next = Some(last.0);
+            }
+        }
+        (collected, next)
+    }
+}
+
+#[derive(Deserialize)]
+struct UiContactPayload {
+    handle: Option<String>,
+    user_id: Option<String>,
+    display_name: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct UiConversationPayload {
+    handle: Option<String>,
+    user_id: Option<String>,
+    title: Option<String>,
+}
+
+fn parse_ui_message_kind(kind: &str) -> Result<enigma_api::types::MessageKind, BoxedResponse> {
+    match kind.to_lowercase().as_str() {
+        "text" => Ok(enigma_api::types::MessageKind::Text),
+        "file" => Ok(enigma_api::types::MessageKind::File),
+        "image" => Ok(enigma_api::types::MessageKind::Image),
+        "video" => Ok(enigma_api::types::MessageKind::Video),
+        "voice" => Ok(enigma_api::types::MessageKind::Voice),
+        "system" => Ok(enigma_api::types::MessageKind::System),
+        "callsignal" => Ok(enigma_api::types::MessageKind::CallSignal),
+        "channelpost" => Ok(enigma_api::types::MessageKind::ChannelPost),
+        "groupevent" => Ok(enigma_api::types::MessageKind::GroupEvent),
+        _ => Err(Box::new(ui_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_MESSAGE_KIND",
+            "unsupported message kind",
+            None,
+        ))),
+    }
+}
+
+fn ui_kind_label(kind: &enigma_api::types::MessageKind) -> &'static str {
+    match kind {
+        enigma_api::types::MessageKind::Text => "Text",
+        enigma_api::types::MessageKind::File => "File",
+        enigma_api::types::MessageKind::Image => "Image",
+        enigma_api::types::MessageKind::Video => "Video",
+        enigma_api::types::MessageKind::Voice => "Voice",
+        enigma_api::types::MessageKind::System => "System",
+        enigma_api::types::MessageKind::CallSignal => "CallSignal",
+        enigma_api::types::MessageKind::ChannelPost => "ChannelPost",
+        enigma_api::types::MessageKind::GroupEvent => "GroupEvent",
+    }
+}
+
+fn parse_ui_user_id(
+    handle: Option<String>,
+    user_id: Option<String>,
+) -> Result<String, BoxedResponse> {
+    match (user_id, handle) {
+        (Some(id), _) => Ok(id),
+        (None, Some(handle)) => {
+            let normalized = match enigma_node_types::normalize_username(&handle) {
+                Ok(n) => n,
+                Err(_) => {
+                    return Err(Box::new(ui_error(
+                        StatusCode::BAD_REQUEST,
+                        "INVALID_HANDLE",
+                        "invalid handle",
+                        None,
+                    )))
+                }
+            };
+            match enigma_node_types::UserId::from_username(&normalized) {
+                Ok(u) => Ok(u.to_hex()),
+                Err(_) => Err(Box::new(ui_error(
+                    StatusCode::BAD_REQUEST,
+                    "INVALID_HANDLE",
+                    "invalid handle",
+                    None,
+                ))),
+            }
+        }
+        _ => Err(Box::new(ui_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_REQUEST",
+            "handle or user_id required",
+            None,
+        ))),
+    }
 }
 
 fn json_response(status: StatusCode, value: serde_json::Value) -> Response<Full<Bytes>> {

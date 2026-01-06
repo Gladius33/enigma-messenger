@@ -1155,6 +1155,21 @@ impl Core {
         conversation_id_for_dm(&self.identity.user_id, other)
     }
 
+    pub async fn ui_contacts(&self) -> Vec<directory::Contact> {
+        self.directory.list().await
+    }
+
+    pub async fn ui_add_contact(
+        &self,
+        handle: String,
+        user_id: String,
+        display_name: Option<String>,
+    ) -> Result<directory::Contact, CoreError> {
+        self.directory
+            .add_or_update_contact(&handle, &user_id, display_name, now_ms())
+            .await
+    }
+
     #[cfg(test)]
     pub async fn mark_device_delivered(
         &self,

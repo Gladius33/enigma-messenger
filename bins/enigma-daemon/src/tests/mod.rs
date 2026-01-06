@@ -13,15 +13,18 @@ use enigma_core::time::now_ms;
 use enigma_node_types::{RelayKind, UserId};
 use hyper::client::conn::http1 as client_http1;
 use hyper::server::conn::http1 as server_http1;
+use std::collections::HashMap;
 use std::net::TcpListener;
 use std::sync::Arc;
 use std::time::Duration;
 use tempfile::tempdir;
 use tokio::io::duplex;
+use tokio::sync::Mutex;
 use uuid::Uuid;
 
 mod calls_tests;
 mod harness;
+mod ui_api_tests;
 
 #[tokio::test]
 async fn config_round_trip() {
@@ -449,6 +452,9 @@ pub(super) async fn build_state(cfg: &EnigmaConfig) -> DaemonState {
             max_publish_tracks_per_participant: cfg.calls.max_publish_tracks_per_participant,
             max_subscriptions_per_participant: cfg.calls.max_subscriptions_per_participant,
         },
+        ui_messages: Arc::new(Mutex::new(HashMap::new())),
+        ui_events: Arc::new(Mutex::new(UiEvents::new())),
+        ui_conversations: Arc::new(Mutex::new(HashMap::new())),
     }
 }
 

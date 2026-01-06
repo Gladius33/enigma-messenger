@@ -3,6 +3,7 @@ enigma-messenger orchestrates core messaging for Enigma. It wires identity, poli
 Contents
 - crates/enigma-core: core runtime, policy, persistence, transports, groups/channels, attachments
 - crates/enigma-api: DTOs and validation for UI surfaces
+- crates/enigma-ui-api: UI-facing DTOs and response envelopes used by the daemon API (see API.md)
 - bins/enigma-daemon: background runtime wrapper
 - bins/enigma-cli: smoke-test CLI
 
@@ -10,6 +11,7 @@ Build
 - cargo test
 - run daemon: cargo run -p enigma-daemon -- --config config.json
 - run CLI: cargo run -p enigma-cli -- --help
+- UI contract: /api/v1 is documented in API.md with versioned DTOs from crates/enigma-ui-api
 
 Production quickstart
 - Install runtime services pinned to crates.io releases: `cargo install enigma-node-registry --version 0.0.2` and `cargo install enigma-relay --version 0.0.3`.
