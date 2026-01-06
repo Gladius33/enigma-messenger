@@ -1,0 +1,19 @@
+address = "127.0.0.1:9000"
+mode = "http"
+allow_sync = true
+
+[envelope]
+pepper_hex = "0000000000000000000000000000000000000000000000000000000000000000"
+[[envelope.keys]]
+kid_hex = "0102030405060708"
+x25519_private_key_hex = "1111111111111111111111111111111111111111111111111111111111111111"
+active = true
+
+[storage]
+kind = "sled"
+path = "/var/lib/enigma/registry"
+
+[pow]
+enabled = false
+max_solve_ms = 1500
+retry_attempts = 2

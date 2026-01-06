@@ -16,8 +16,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Install musl target
+        run: |
+          rustup target add x86_64-unknown-linux-musl
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
       - uses: Swatinem/rust-cache@v2
       - name: release build
+        env:
+          TARGET: x86_64-unknown-linux-musl
         run: ./scripts/release_build.sh
       - name: Install minisign
         run: sudo apt-get update && sudo apt-get install -y minisign
@@ -34,14 +41,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: enigma-daemon-linux
-          path: dist/enigma-daemon
+          path: dist/enigma-daemon-x86_64-unknown-linux-musl
           if-no-files-found: error
 
       - name: Upload enigma-cli (linux)
         uses: actions/upload-artifact@v4
         with:
           name: enigma-cli-linux
-          path: dist/enigma-cli
+          path: dist/enigma-cli-x86_64-unknown-linux-musl
           if-no-files-found: error
 
       - name: Upload dist artifacts

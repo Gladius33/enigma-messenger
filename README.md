@@ -93,13 +93,19 @@ Production quickstart
   [sfu]
   enabled = false
 
-  [calls]
-  enabled = false
+[calls]
+enabled = false
 
-  [logging]
-  level = "info"
-  ```
+[api]
+bind_addr = "127.0.0.1:9171"
+
+[logging]
+level = "info"
+```
 - Run all three locally: `enigma-node-registry --config registry.toml`, `enigma-relay --config relay.toml`, then `cargo run -p enigma-daemon -- --config enigma.toml`.
+- Config templates are published under `deployment/etc/enigma/` and can be emitted from the binary with `enigma-cli print-default-config --service daemon`.
+- Validate deployments with `enigma-cli doctor --config /etc/enigma/daemon.toml`; it checks config validity, permissions on `/var/lib/enigma`, and `/api/v1/health`.
+- Hardened systemd units for the registry, relay, and daemon live in `systemd/` and are documented in `deployment/single-node-prod.md`.
 
 How to run CI locally
 - cargo fmt --all -- --check

@@ -1,8 +1,8 @@
 use super::*;
 use crate::clients::{registry_http::RegistryHttpClient, relay_http::RelayHttpClient};
 use crate::config::{
-    CallsConfig, EndpointMode, HttpClientConfig, IdentityConfig, LoggingConfig, PowConfig,
-    RegistryConfig, RelayConfig, SfuConfig, TransportConfig, WebRtcConfig,
+    ApiConfig, CallsConfig, EndpointMode, HttpClientConfig, IdentityConfig, LoggingConfig,
+    PowConfig, RegistryConfig, RelayConfig, SfuConfig, TransportConfig, WebRtcConfig,
 };
 use base64::Engine;
 use enigma_core::directory::RegistryClient;
@@ -13,6 +13,7 @@ use enigma_core::time::now_ms;
 use enigma_node_types::{RelayKind, UserId};
 use hyper::client::conn::http1 as client_http1;
 use hyper::server::conn::http1 as server_http1;
+use hyper::service::service_fn;
 use std::collections::HashMap;
 use std::net::TcpListener;
 use std::sync::Arc;
@@ -92,14 +93,18 @@ level = "info"
     assert!(loaded.relay.enabled);
     assert!(loaded.calls.enabled);
     assert_eq!(loaded.calls.max_publish_tracks_per_participant, 2);
+    assert_eq!(loaded.api.bind_addr, "127.0.0.1:9171");
 }
 
 #[tokio::test]
 async fn daemon_starts_and_stops() {
     let cfg = test_config(false, false, false);
     let state = build_state(&cfg).await;
-    let (addr, tx, handle) = start_server(state).await;
-    assert!(addr.is_some() || addr.is_none());
+    let api_addr = cfg.api.socket_addr().unwrap();
+    let (addr, tx, handle) = start_server(state, api_addr).await;
+    if let Some(value) = addr {
+        assert!(value.port() > 0);
+    }
     let _ = tx.send(());
     let _ = tokio::time::timeout(Duration::from_secs(2), handle).await;
 }
@@ -112,7 +117,8 @@ async fn sfu_control_endpoints() {
         ..test_config(true, true, true)
     };
     let state = build_state(&cfg).await;
-    let (addr, tx, handle) = start_server(state.clone()).await;
+    let api_addr = cfg.api.socket_addr().unwrap();
+    let (addr, tx, handle) = start_server(state.clone(), api_addr).await;
     let health = dispatch_request(state.clone(), addr, build_request("GET", "/health", None)).await;
     assert_eq!(health.status(), StatusCode::OK);
     let rooms = dispatch_request(
@@ -425,6 +431,9 @@ pub(super) fn test_config(
                 stun_servers: Vec::new(),
             },
         },
+        api: ApiConfig {
+            bind_addr: "127.0.0.1:0".to_string(),
+        },
         sfu: SfuConfig {
             enabled: sfu_enabled,
         },
@@ -460,10 +469,18 @@ pub(super) async fn build_state(cfg: &EnigmaConfig) -> DaemonState {
 
 pub(super) async fn start_server(
     state: DaemonState,
+    api_addr: SocketAddr,
 ) -> (Option<SocketAddr>, oneshot::Sender<()>, JoinHandle<()>) {
     let (tx, rx) = oneshot::channel();
-    let (addr, handle) = start_control_server(state, rx).await.unwrap();
-    (addr, tx, handle)
+    let (addr, handle) = match start_control_server(state, rx, api_addr).await {
+        Ok(output) => output,
+        Err(DaemonError::Bind) => {
+            let handle = tokio::spawn(async move {});
+            return (None, tx, handle);
+        }
+        Err(err) => panic!("{:?}", err),
+    };
+    (Some(addr), tx, handle)
 }
 
 pub(super) fn build_request(

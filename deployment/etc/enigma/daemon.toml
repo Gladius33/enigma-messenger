@@ -1,0 +1,74 @@
+data_dir = "/var/lib/enigma/daemon"
+
+[identity]
+user_handle = "daemon"
+device_name = "daemon"
+
+[policy]
+max_text_bytes = 262144
+max_message_rate_per_minute = 600
+max_inline_media_bytes = 67108864
+max_attachment_chunk_bytes = 1048576
+max_attachment_parallel_chunks = 4
+max_group_name_len = 64
+max_channel_name_len = 64
+max_membership_changes_per_minute = 120
+max_retry_window_secs = 3600
+backoff_initial_ms = 500
+backoff_max_ms = 60000
+outbox_batch_send = 32
+directory_ttl_secs = 3600
+directory_refresh_on_send = true
+receipt_aggregation = "Any"
+group_crypto_mode = "Fanout"
+sender_keys_rotate_every_msgs = 1000
+sender_keys_rotate_on_membership_change = true
+
+[registry]
+enabled = true
+base_url = "http://127.0.0.1:9000"
+mode = "http"
+pepper_hex = "0000000000000000000000000000000000000000000000000000000000000000"
+key_cache_ttl_secs = 300
+
+[registry.http]
+timeout_secs = 10
+connect_timeout_secs = 5
+read_timeout_secs = 10
+retry_attempts = 3
+retry_backoff_ms = 200
+
+[registry.pow]
+enabled = false
+max_solve_ms = 1500
+retry_attempts = 2
+
+[relay]
+enabled = true
+base_url = "http://127.0.0.1:9100"
+mode = "http"
+
+[relay.http]
+timeout_secs = 10
+connect_timeout_secs = 5
+read_timeout_secs = 10
+retry_attempts = 3
+retry_backoff_ms = 200
+
+[transport.webrtc]
+enabled = false
+stun_servers = []
+
+[sfu]
+enabled = false
+
+[calls]
+enabled = false
+max_publish_tracks_per_participant = 4
+max_subscriptions_per_participant = 16
+
+[api]
+bind_addr = "127.0.0.1:9171"
+
+[logging]
+level = "info"

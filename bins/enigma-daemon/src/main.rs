@@ -86,6 +86,8 @@ enum DaemonError {
     Config,
     #[error("core")]
     Core,
+    #[error("bind")]
+    Bind,
 }
 
 #[tokio::main]
@@ -100,6 +102,7 @@ async fn main() -> Result<(), DaemonError> {
         i += 1;
     }
     let cfg = config::load_config(&path).map_err(|_| DaemonError::Config)?;
+    let api_addr = cfg.api.socket_addr().map_err(|_| DaemonError::Config)?;
     init_logging(&cfg);
     let core = init_core(&cfg).await?;
     let (sfu, sfu_adapter) = init_sfu(&cfg);
@@ -121,7 +124,7 @@ async fn main() -> Result<(), DaemonError> {
         ui_conversations: Arc::new(Mutex::new(HashMap::new())),
     };
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
-    let (_addr, server) = start_control_server(state, shutdown_rx).await?;
+    let (_addr, server) = start_control_server(state, shutdown_rx, api_addr).await?;
     let ctrl_c = signal::ctrl_c();
     tokio::pin!(ctrl_c);
     let _ = ctrl_c.as_mut().await;
@@ -220,23 +223,17 @@ fn init_sfu(cfg: &EnigmaConfig) -> (Option<Arc<Sfu>>, Option<Arc<DaemonSfuAdapte
 async fn start_control_server(
     state: DaemonState,
     shutdown: oneshot::Receiver<()>,
-) -> Result<(Option<SocketAddr>, JoinHandle<()>), DaemonError> {
-    let addr = SocketAddr::from(([127, 0, 0, 1], 0));
-    let listener = match TcpListener::bind(addr).await {
-        Ok(l) => l,
-        Err(_) => {
-            let handle = tokio::spawn(async move {
-                let _ = shutdown.await;
-            });
-            return Ok((None, handle));
-        }
-    };
-    let local_addr = listener.local_addr().ok();
+    api_addr: SocketAddr,
+) -> Result<(SocketAddr, JoinHandle<()>), DaemonError> {
+    let mut shutdown_rx = shutdown;
+    let listener = TcpListener::bind(api_addr)
+        .await
+        .map_err(|_| DaemonError::Bind)?;
+    let local_addr = listener.local_addr().map_err(|_| DaemonError::Bind)?;
     let handle = tokio::spawn(async move {
-        let mut shutdown = shutdown;
         loop {
             tokio::select! {
-                _ = &mut shutdown => {
+                _ = &mut shutdown_rx => {
                     break;
                 }
                 res = listener.accept() => {

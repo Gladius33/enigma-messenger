@@ -26,7 +26,8 @@ Tagging
 
 Release workflow
 - Push tag vX.Y.Z; GitHub Actions release workflow validates the checklist, runs scripts/release_build.sh, builds release binaries, and uploads artifacts for enigma-daemon and enigma-cli.
-- BUILDINFO.json and SHA256SUMS are produced for every tagged build; SHA256SUMS is signed when a minisign key is configured.
+- Release artifacts are built for `x86_64-unknown-linux-musl` (`enigma-daemon-x86_64-unknown-linux-musl` and `enigma-cli-x86_64-unknown-linux-musl`) alongside BUILDINFO.json.
+- SHA256SUMS is produced for every tagged build and signed when a minisign key is configured.
 - No auto-publish to crates.io; publishing is manual in the order above after artifacts are verified from the tagged build.
 
 Rollback guidance

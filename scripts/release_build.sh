@@ -12,18 +12,20 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --locked
 cargo test --locked --all-features
 cargo build --locked --release --workspace
+cargo build --locked --release --workspace --all-features
+TARGET="${TARGET:-x86_64-unknown-linux-musl}"
+cargo build --locked --release --workspace --target "$TARGET"
+cargo build --locked --release --workspace --all-features --target "$TARGET"
 
 mkdir -p "$ROOT/dist"
-cp "$ROOT/target/release/enigma-daemon" "$ROOT/dist/enigma-daemon"
-cp "$ROOT/target/release/enigma-cli" "$ROOT/dist/enigma-cli"
-
-cargo build --locked --release --workspace --all-features
+cp "$ROOT/target/$TARGET/release/enigma-daemon" "$ROOT/dist/enigma-daemon-$TARGET"
+cp "$ROOT/target/$TARGET/release/enigma-cli" "$ROOT/dist/enigma-cli-$TARGET"
 
 GIT_COMMIT="$(git rev-parse HEAD)"
 GIT_TAG="$(git describe --tags --abbrev=0 2>/dev/null || echo "untagged")"
 RUSTC_VERSION="$(rustc -V)"
 CARGO_VERSION="$(cargo -V)"
-TARGET_TRIPLE="$(rustc -vV | sed -n 's/^host: //p')"
+TARGET_TRIPLE="$TARGET"
 TIMESTAMP_UTC="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 FEATURES="default"
 
@@ -39,4 +41,4 @@ cat > "$ROOT/dist/BUILDINFO.json" <<EOF
 }
 EOF
 
-(cd "$ROOT/dist" && sha256sum enigma-daemon enigma-cli BUILDINFO.json > SHA256SUMS)
+(cd "$ROOT/dist" && sha256sum "enigma-daemon-$TARGET" "enigma-cli-$TARGET" BUILDINFO.json > SHA256SUMS)

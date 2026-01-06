@@ -1,0 +1,6 @@
+bind_addr = "127.0.0.1:9200"
+log_level = "info"
+
+[tls]
+cert_path = "/etc/enigma/sfu-cert.pem"
+key_path = "/etc/enigma/sfu-key.pem"

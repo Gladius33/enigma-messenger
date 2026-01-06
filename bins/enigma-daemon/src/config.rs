@@ -1,10 +1,11 @@
 use enigma_core::policy::Policy;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::fs;
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct EnigmaConfig {
     pub data_dir: PathBuf,
@@ -17,17 +18,19 @@ pub struct EnigmaConfig {
     pub sfu: SfuConfig,
     #[serde(default)]
     pub calls: CallsConfig,
+    #[serde(default)]
+    pub api: ApiConfig,
     pub logging: LoggingConfig,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct IdentityConfig {
     pub user_handle: String,
     pub device_name: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RegistryConfig {
     #[serde(default = "default_enabled")]
@@ -47,7 +50,7 @@ pub struct RegistryConfig {
     pub key_cache_ttl_secs: u64,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RelayConfig {
     #[serde(default = "default_enabled")]
@@ -61,26 +64,41 @@ pub struct RelayConfig {
     pub http: HttpClientConfig,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TransportConfig {
     pub webrtc: WebRtcConfig,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct WebRtcConfig {
     pub enabled: bool,
     pub stun_servers: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ApiConfig {
+    #[serde(default = "default_api_bind_addr")]
+    pub bind_addr: String,
+}
+
+impl Default for ApiConfig {
+    fn default() -> Self {
+        Self {
+            bind_addr: default_api_bind_addr(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct LoggingConfig {
     pub level: String,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum EndpointMode {
     #[default]
@@ -88,7 +106,7 @@ pub enum EndpointMode {
     Tls,
 }
 
-#[derive(Clone, Debug, Deserialize, Default)]
+#[derive(Clone, Debug, Deserialize, Serialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct TlsConfig {
     #[serde(default)]
@@ -99,7 +117,7 @@ pub struct TlsConfig {
     pub client_key: Option<PathBuf>,
 }
 
-#[derive(Clone, Debug, Deserialize, Default)]
+#[derive(Clone, Debug, Deserialize, Serialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct PowConfig {
     #[serde(default)]
@@ -110,14 +128,14 @@ pub struct PowConfig {
     pub retry_attempts: u32,
 }
 
-#[derive(Clone, Debug, Deserialize, Default)]
+#[derive(Clone, Debug, Deserialize, Serialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct SfuConfig {
     #[serde(default)]
     pub enabled: bool,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CallsConfig {
     #[serde(default)]
@@ -128,7 +146,7 @@ pub struct CallsConfig {
     pub max_subscriptions_per_participant: u32,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct HttpClientConfig {
     #[serde(default = "default_timeout_secs")]
@@ -209,6 +227,10 @@ fn default_key_cache_ttl_secs() -> u64 {
     300
 }
 
+fn default_api_bind_addr() -> String {
+    "127.0.0.1:9171".to_string()
+}
+
 #[derive(Debug, Error)]
 pub enum ConfigError {
     #[error("io")]
@@ -223,6 +245,7 @@ impl EnigmaConfig {
     pub fn validate(&self) -> Result<(), ConfigError> {
         self.registry.validate()?;
         self.relay.validate()?;
+        self.api.validate()?;
         Ok(())
     }
 }
@@ -236,6 +259,13 @@ impl RegistryConfig {
             return Err(ConfigError::Validation("registry_base_url".to_string()));
         }
         validate_endpoint(&self.base_url, self.mode, "registry_mode")?;
+        if matches!(self.mode, EndpointMode::Tls) {
+            let tls = self
+                .tls
+                .as_ref()
+                .ok_or_else(|| ConfigError::Validation("registry_tls".to_string()))?;
+            tls.enforce("registry_tls")?;
+        }
         if self.pepper_hex.is_none() {
             return Err(ConfigError::Validation("registry_pepper".to_string()));
         }
@@ -248,7 +278,7 @@ impl RegistryConfig {
         }
         self.pow.validate()?;
         if let Some(tls) = &self.tls {
-            tls.validate()?;
+            tls.validate_pair()?;
         }
         Ok(())
     }
@@ -267,18 +297,54 @@ impl RelayConfig {
             return Err(ConfigError::Validation("relay_base_url".to_string()));
         }
         validate_endpoint(base, self.mode, "relay_mode")?;
+        if matches!(self.mode, EndpointMode::Tls) {
+            let tls = self
+                .tls
+                .as_ref()
+                .ok_or_else(|| ConfigError::Validation("relay_tls".to_string()))?;
+            tls.enforce("relay_tls")?;
+        }
         self.http.validate("relay")?;
         if let Some(tls) = &self.tls {
-            tls.validate()?;
+            tls.validate_pair()?;
         }
         Ok(())
     }
 }
 
 impl TlsConfig {
-    pub fn validate(&self) -> Result<(), ConfigError> {
+    pub fn validate_pair(&self) -> Result<(), ConfigError> {
         if self.client_cert.is_some() != self.client_key.is_some() {
             return Err(ConfigError::Validation("tls_identity".to_string()));
+        }
+        Ok(())
+    }
+
+    pub fn enforce(&self, scope: &str) -> Result<(), ConfigError> {
+        self.validate_pair()?;
+        if self.ca_cert.is_none() {
+            return Err(ConfigError::Validation(format!("{}_ca_cert", scope)));
+        }
+        if self.client_cert.is_none() || self.client_key.is_none() {
+            return Err(ConfigError::Validation(format!(
+                "{}_client_identity",
+                scope
+            )));
+        }
+        if let Some(path) = &self.ca_cert {
+            if !path.exists() {
+                return Err(ConfigError::Validation(format!("{}_ca_cert", scope)));
+            }
+        }
+        if let Some(cert) = &self.client_cert {
+            if !cert.exists() {
+                return Err(ConfigError::Validation(format!("{}_client_cert", scope)));
+            }
+        }
+        if let Some(key) = &self.client_key {
+            if !key.exists() {
+                return Err(ConfigError::Validation(format!("{}_client_key", scope)));
+            }
         }
         Ok(())
     }
@@ -308,6 +374,19 @@ impl HttpClientConfig {
             return Err(ConfigError::Validation(format!("{}_backoff", scope)));
         }
         Ok(())
+    }
+}
+
+impl ApiConfig {
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        self.socket_addr()?;
+        Ok(())
+    }
+
+    pub fn socket_addr(&self) -> Result<SocketAddr, ConfigError> {
+        self.bind_addr
+            .parse()
+            .map_err(|_| ConfigError::Validation("api_bind_addr".to_string()))
     }
 }
 

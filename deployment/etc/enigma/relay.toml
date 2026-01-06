@@ -1,0 +1,10 @@
+address = "127.0.0.1:9100"
+mode = "http"
+
+[storage]
+kind = "sled"
+path = "/var/lib/enigma/relay"
+
+[relay]
+pull_batch_max = 128
+message_ttl_seconds = 300

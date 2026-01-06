@@ -5,7 +5,8 @@ use crate::tests::{build_request, build_state, dispatch_request, start_server, t
 async fn calls_disabled_returns_503() {
     let cfg = test_config(false, true, true);
     let state = build_state(&cfg).await;
-    let (addr, tx, handle) = start_server(state.clone()).await;
+    let api_addr = cfg.api.socket_addr().unwrap();
+    let (addr, tx, handle) = start_server(state.clone(), api_addr).await;
     let resp = dispatch_request(
         state.clone(),
         addr,
@@ -25,7 +26,8 @@ async fn calls_disabled_returns_503() {
 async fn join_leave_updates_state_and_sfu_room_info() {
     let cfg = test_config(true, true, true);
     let state = build_state(&cfg).await;
-    let (addr, tx, handle) = start_server(state.clone()).await;
+    let api_addr = cfg.api.socket_addr().unwrap();
+    let (addr, tx, handle) = start_server(state.clone(), api_addr).await;
     create_room(&state, addr, "test-room").await;
     let join = dispatch_request(
         state.clone(),
@@ -80,7 +82,8 @@ async fn join_leave_updates_state_and_sfu_room_info() {
 async fn offer_answer_roundtrip_persists_and_get_signaling_returns_it() {
     let cfg = test_config(true, true, true);
     let state = build_state(&cfg).await;
-    let (addr, tx, handle) = start_server(state.clone()).await;
+    let api_addr = cfg.api.socket_addr().unwrap();
+    let (addr, tx, handle) = start_server(state.clone(), api_addr).await;
     create_room(&state, addr, "test-room").await;
     join_call(&state, addr, "test-room", "alice").await;
     let offer = dispatch_request(
@@ -123,7 +126,8 @@ async fn offer_answer_roundtrip_persists_and_get_signaling_returns_it() {
 async fn ice_candidates_are_stored_and_retrievable() {
     let cfg = test_config(true, true, true);
     let state = build_state(&cfg).await;
-    let (addr, tx, handle) = start_server(state.clone()).await;
+    let api_addr = cfg.api.socket_addr().unwrap();
+    let (addr, tx, handle) = start_server(state.clone(), api_addr).await;
     create_room(&state, addr, "test-room").await;
     join_call(&state, addr, "test-room", "alice").await;
     let _ = dispatch_request(
@@ -170,7 +174,8 @@ async fn ice_candidates_are_stored_and_retrievable() {
 async fn invalid_ids_rejected() {
     let cfg = test_config(true, true, true);
     let state = build_state(&cfg).await;
-    let (addr, tx, handle) = start_server(state.clone()).await;
+    let api_addr = cfg.api.socket_addr().unwrap();
+    let (addr, tx, handle) = start_server(state.clone(), api_addr).await;
     create_room(&state, addr, "test-room").await;
     let resp = dispatch_request(
         state.clone(),
@@ -191,7 +196,8 @@ async fn invalid_ids_rejected() {
 async fn join_twice_returns_409() {
     let cfg = test_config(true, true, true);
     let state = build_state(&cfg).await;
-    let (addr, tx, handle) = start_server(state.clone()).await;
+    let api_addr = cfg.api.socket_addr().unwrap();
+    let (addr, tx, handle) = start_server(state.clone(), api_addr).await;
     create_room(&state, addr, "test-room").await;
     join_call(&state, addr, "test-room", "alice").await;
     let second = dispatch_request(

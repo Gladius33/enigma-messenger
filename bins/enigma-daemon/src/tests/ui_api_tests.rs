@@ -16,9 +16,11 @@ async fn body_bytes(resp: Response<Incoming>) -> Vec<u8> {
 async fn ui_health_identity_contacts_flow() {
     let cfg = test_config(false, false, false);
     let state = build_state(&cfg).await;
+    let api_addr = cfg.api.socket_addr().unwrap();
+    let (addr, tx, handle) = start_server(state.clone(), api_addr).await;
     let health = dispatch_request(
         state.clone(),
-        None,
+        addr,
         build_request("GET", "/api/v1/health", None),
     )
     .await;
@@ -33,7 +35,7 @@ async fn ui_health_identity_contacts_flow() {
 
     let identity = dispatch_request(
         state.clone(),
-        None,
+        addr,
         build_request("GET", "/api/v1/identity", None),
     )
     .await;
@@ -44,7 +46,7 @@ async fn ui_health_identity_contacts_flow() {
 
     let add_contact = dispatch_request(
         state.clone(),
-        None,
+        addr,
         build_request(
             "POST",
             "/api/v1/contacts/add",
@@ -59,7 +61,7 @@ async fn ui_health_identity_contacts_flow() {
 
     let contacts = dispatch_request(
         state.clone(),
-        None,
+        addr,
         build_request("GET", "/api/v1/contacts", None),
     )
     .await;
@@ -70,7 +72,7 @@ async fn ui_health_identity_contacts_flow() {
 
     let conversation = dispatch_request(
         state.clone(),
-        None,
+        addr,
         build_request(
             "POST",
             "/api/v1/conversations/create",
@@ -94,7 +96,7 @@ async fn ui_health_identity_contacts_flow() {
 
     let send = dispatch_request(
         state.clone(),
-        None,
+        addr,
         build_request(
             "POST",
             "/api/v1/messages/send",
@@ -113,7 +115,7 @@ async fn ui_health_identity_contacts_flow() {
 
     let messages = dispatch_request(
         state.clone(),
-        None,
+        addr,
         build_request(
             "GET",
             &format!("/api/v1/conversations/{}/messages", convo_id),
@@ -128,7 +130,7 @@ async fn ui_health_identity_contacts_flow() {
 
     let sync = dispatch_request(
         state.clone(),
-        None,
+        addr,
         build_request("POST", "/api/v1/sync", Some(serde_json::json!({}))),
     )
     .await;
@@ -136,15 +138,19 @@ async fn ui_health_identity_contacts_flow() {
     let sync_body: Envelope<serde_json::Value> =
         serde_json::from_slice(&body_bytes(sync).await).unwrap();
     assert!(sync_body.error.is_none());
+    let _ = tx.send(());
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;
 }
 
 #[tokio::test]
 async fn ui_errors_are_structured() {
     let cfg = test_config(false, false, false);
     let state = build_state(&cfg).await;
+    let api_addr = cfg.api.socket_addr().unwrap();
+    let (addr, tx, handle) = start_server(state.clone(), api_addr).await;
     let resp = dispatch_request(
         state.clone(),
-        None,
+        addr,
         build_request(
             "POST",
             "/api/v1/messages/send",
@@ -162,4 +168,6 @@ async fn ui_errors_are_structured() {
     assert!(body.data.is_none());
     assert!(body.error.is_some());
     assert!(body.meta.get("timestamp_ms").is_some());
+    let _ = tx.send(());
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;
 }

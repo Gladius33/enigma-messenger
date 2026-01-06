@@ -1,0 +1,39 @@
+[Unit]
+Description=Enigma node registry
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=enigma
+Group=enigma
+EnvironmentFile=-/etc/enigma/enigma-node-registry.env
+ExecStartPre=/usr/bin/install -d -o enigma -g enigma -m 750 /var/lib/enigma/registry
+ExecStart=/usr/bin/enigma-node-registry --config /etc/enigma/registry.toml
+Restart=on-failure
+RestartSec=2s
+RuntimeDirectory=enigma
+StateDirectory=enigma
+LogsDirectory=enigma
+ConfigurationDirectory=enigma
+ReadWritePaths=/var/lib/enigma /var/log/enigma
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallFilter=@system-service @network-io
+CapabilityBoundingSet=
+AmbientCapabilities=
+LimitNOFILE=65536
+TasksMax=2048
+
+[Install]
+WantedBy=multi-user.target
