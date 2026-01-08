@@ -1,5 +1,6 @@
 # Local development
 
+- Canonical production runbook: `deployment/single-node-prod.md`.
 - Use the templates under `deployment/etc/enigma/` as a starting point. For local testing, replace `/var/lib/enigma` paths with a writable temp directory.
 - Generate the daemon template from the binary when installed: `enigma-cli print-default-config --service daemon`.
 - Run the registry and relay from crates.io with the provided `registry.toml` and `relay.toml` templates, keeping the loopback addresses and HTTP mode.

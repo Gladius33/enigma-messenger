@@ -1,22 +1,62 @@
 # Single node production
 
-Preparation
-- Create a locked-down user for all services: `useradd --system --home /var/lib/enigma --shell /usr/sbin/nologin enigma`.
-- Place configs under `/etc/enigma/` using the templates in `deployment/etc/enigma/`. Keep registry/relay bound to loopback or an internal address and switch to `mode = "tls"` only when cert/key paths are populated.
-- TLS endpoints must provide `tls.ca_cert`, `tls.client_cert`, and `tls.client_key`; the daemon refuses TLS configs without those paths.
-- Ensure `/var/lib/enigma` exists and is owned by `enigma:enigma` with 0750 permissions; the systemd units will create it when absent.
-- Prefer journald; `/var/log/enigma/` is created by the units if you need file logs.
+This is the canonical runbook for a minimal single-host deployment (registry + relay + daemon on one host). The UI API stays on 127.0.0.1 by default and should only be exposed behind a reverse proxy.
 
-Systemd units
-- Copy `systemd/enigma-daemon.service`, `systemd/enigma-relay.service`, and `systemd/enigma-node-registry.service` to `/etc/systemd/system/`.
-- Enable and start in order: `systemctl daemon-reload`, `systemctl enable --now enigma-node-registry.service enigma-relay.service enigma-daemon.service`.
-- Environment overrides can be placed in `/etc/enigma/enigma-*.env`; config paths default to `/etc/enigma/*.toml`.
+## Preparation
+- Ensure systemd, curl, and the Enigma binaries are installed on the host.
+- Decide whether the registry and relay are co-hosted or remote; update the daemon config accordingly.
 
-Firewall
-- Allow only the registry and relay listener ports (default 9000 and 9100) from trusted peers. Keep the daemon UI API on `127.0.0.1:9171` and block it externally.
-- Example (ufw): `ufw allow 9000/tcp`, `ufw allow 9100/tcp`, deny everything else inbound. The same policy applies with nftables: accept tcp dport {9000,9100} from allowed CIDRs and drop the rest.
+## User and group
+- Create a locked-down service account: `groupadd --system enigma` and `useradd --system --home /var/lib/enigma --shell /usr/sbin/nologin --gid enigma enigma`.
+- Keep configs owned by `root:enigma` and data owned by `enigma:enigma`.
 
-Verification
-- Run `enigma-cli doctor --config /etc/enigma/daemon.toml` as root or the enigma user to confirm config validity, permissions on `/var/lib/enigma`, and `/api/v1/health` reachability.
-- If UI auth is enabled, export `ENIGMA_UI_TOKEN` before running the doctor command so the health check can authenticate.
-- Check `systemctl status` for each unit and review journald logs for startup errors (TLS path issues, bind failures, or permission denials).
+## Directory layout
+- `/etc/enigma/` for configs and environment files (0750, root:enigma).
+- `/var/lib/enigma/daemon` for daemon state (0700, enigma:enigma).
+- `/var/lib/enigma/registry` and `/var/lib/enigma/relay` when co-hosted (0700, enigma:enigma).
+- `/var/log/enigma/` optional if you enable file logging; journald is preferred.
+
+## Install binaries
+- Verify the release artifacts: `cd dist && sha256sum -c SHA256SUMS`.
+- Copy binaries into `/usr/local/bin/` and set permissions: `install -m 0755 enigma-daemon /usr/local/bin/enigma-daemon` and `install -m 0755 enigma-cli /usr/local/bin/enigma-cli`.
+- If co-hosting registry/relay, install `enigma-node-registry` and `enigma-relay` the same way.
+- Confirm versions: `enigma-daemon --version` and `enigma-cli --version`.
+
+## Config
+- Copy templates from `deployment/etc/enigma/` to `/etc/enigma/`.
+- Update `daemon.toml` `data_dir`, `identity.user_handle`, and `registry/relay` base URLs for your deployment.
+- Keep `[api].bind_addr = "127.0.0.1:9171"` unless you front it with a reverse proxy.
+- Ensure config files are `0640` and owned by `root:enigma`.
+
+## Secrets
+- Replace the placeholder `pepper_hex` and `envelope.keys` values in `registry.toml` with real keys; never ship the template values.
+- If you enable TLS for registry/relay, switch `mode = "tls"` and provide all required certificate paths; the daemon refuses TLS configs without them.
+- Set UI API auth token in `/etc/enigma/enigma-daemon.env` as `ENIGMA_UI_TOKEN=...` and keep the file `0640 root:enigma`.
+- Storage encryption relies on a master key from the key provider; use a production-grade key source and rotation policy rather than embedded demo keys.
+
+## Systemd units
+- Copy `systemd/enigma-daemon.service`, `systemd/enigma-node-registry.service`, and `systemd/enigma-relay.service` to `/etc/systemd/system/`.
+- Create optional environment files: `/etc/enigma/enigma-daemon.env`, `/etc/enigma/enigma-node-registry.env`, `/etc/enigma/enigma-relay.env`.
+- Reload and start services: `systemctl daemon-reload` then `systemctl enable --now enigma-node-registry enigma-relay enigma-daemon`.
+- If registry/relay are remote, disable their units and set `enabled = false` or remote URLs in `daemon.toml`.
+- Validate hardening with `deployment/check_systemd_hardening.md`.
+
+## Firewall
+- Allow only registry and relay listener ports (default 9000 and 9100) from trusted peers.
+- Keep the UI API on `127.0.0.1:9171`; block it externally.
+
+## Verification
+- Check service status and logs: `systemctl status enigma-daemon` and `journalctl -u enigma-daemon -n 200`.
+- Run `enigma-cli doctor --config /etc/enigma/daemon.toml` (export `ENIGMA_UI_TOKEN` if UI auth is enabled).
+- Validate migrations: `enigma-cli migrate --dry-run --config /etc/enigma/daemon.toml`, apply with `--apply --yes` when required.
+- Hit the UI health endpoint: `curl -sSf http://127.0.0.1:9171/api/v1/health`.
+
+## Smoke test
+- Run `deployment/smoke.sh` after services are up: `ENIGMA_CONFIG=/etc/enigma/daemon.toml deployment/smoke.sh`.
+- If UI auth is enabled: `ENIGMA_UI_TOKEN=... ENIGMA_CONFIG=/etc/enigma/daemon.toml deployment/smoke.sh`.
+
+## Upgrades
+- Review `MIGRATIONS.md`, `COMPATIBILITY.md`, and `RELEASE.md` before upgrading.
+- Verify the new release checksums, back up `/var/lib/enigma`, and run `enigma-cli migrate --dry-run`.
+- Stop services, replace binaries/configs, run `systemctl daemon-reload`, then start `enigma-node-registry`, `enigma-relay`, and `enigma-daemon`.
+- Re-run `enigma-cli doctor` and `deployment/smoke.sh` after the upgrade.

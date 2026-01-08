@@ -25,10 +25,15 @@ Tagging
 - Use tags of the form vX.Y.Z.
 
 Release workflow
-- Push tag vX.Y.Z; GitHub Actions release workflow validates the checklist, runs scripts/release_build.sh, builds release binaries, and uploads artifacts for enigma-daemon and enigma-cli.
-- Release artifacts are built for `x86_64-unknown-linux-musl` (`enigma-daemon-x86_64-unknown-linux-musl` and `enigma-cli-x86_64-unknown-linux-musl`) alongside BUILDINFO.json.
-- SHA256SUMS is produced for every tagged build and signed when a minisign key is configured.
+- Push tag vX.Y.Z; the GitHub Actions release workflow runs `scripts/release_build.sh` and uploads `dist/`.
+- Artifacts are built for `x86_64-unknown-linux-gnu` and named `enigma-daemon-<version>-x86_64-unknown-linux-gnu-release` and `enigma-cli-<version>-x86_64-unknown-linux-gnu-release`.
+- `dist/` includes `manifest.json`, per-file `.sha256`, and a `SHA256SUMS` aggregate for verification.
 - No auto-publish to crates.io; publishing is manual in the order above after artifacts are verified from the tagged build.
+
+Local release build
+- Run `./scripts/release_build.sh`.
+- Verify artifacts: `cd dist && sha256sum -c SHA256SUMS`.
+- After deploying to a host, run `deployment/smoke.sh` with `ENIGMA_CONFIG=/etc/enigma/daemon.toml` (and `ENIGMA_UI_TOKEN` if required).
 
 Rollback guidance
 - If a release fails validation or post-tag verification, yank the tag and republish after fixes.
@@ -36,4 +41,3 @@ Rollback guidance
 
 Security note
 - Artifacts are built from tags only; no auto-deploy to production systems.
-- See docs/distribution.md for verification and trust guidance.

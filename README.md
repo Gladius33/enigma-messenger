@@ -107,6 +107,7 @@ level = "info"
 - Validate deployments with `enigma-cli doctor --config /etc/enigma/daemon.toml`; it checks config validity, permissions on `/var/lib/enigma`, and `/api/v1/health`.
 - Hardened systemd units for the registry, relay, and daemon live in `systemd/` and are documented in `deployment/single-node-prod.md`.
 - Compatibility and migration policy is documented in `COMPATIBILITY.md`; store migrations and CLI workflows live in `MIGRATIONS.md`.
+- Deployment runbook (canonical): `deployment/single-node-prod.md` with local dev notes in `deployment/local-dev.md` and upgrade guidance in `deployment/upgrade.md`.
 
 How to run CI locally
 - cargo fmt --all -- --check
@@ -117,11 +118,11 @@ How to run CI locally
 - cargo build --release && cargo build --release --all-features
 
 Release process
+- See RELEASE.md for tagging, publish order, and local release steps.
 - Update CHANGELOG.md and pin versions in Cargo.toml before tagging.
-- Run the full CI command set locally.
-- Tag as vX.Y.Z and push; the release workflow builds artifacts for enigma-daemon and enigma-cli.
-- Manual publish (when ready): cargo publish -p enigma-api, then -p enigma-core, then binaries (enigma-daemon, enigma-cli) if distributing via crates.io.
-- Reproducible build and verification steps are documented in scripts/release_build.sh and docs/distribution.md.
+- Run the full CI command set locally or `./scripts/release_build.sh`.
+- Tag as vX.Y.Z and push; the release workflow runs `./scripts/release_build.sh` and uploads dist artifacts.
+- Post-deploy smoke: `deployment/smoke.sh`.
 
 Feature matrix
 - Relay 0.0.3 ack/pull contract: cargo test -p enigma-daemon tests::relay_integration_outbox

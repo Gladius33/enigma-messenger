@@ -93,6 +93,10 @@ enum DaemonError {
 #[tokio::main]
 async fn main() -> Result<(), DaemonError> {
     let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|arg| arg == "--version" || arg == "-V") {
+        println!("{}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
     let mut path = PathBuf::from("enigma.toml");
     let mut i = 1;
     while i + 1 < args.len() {

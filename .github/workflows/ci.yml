@@ -74,6 +74,14 @@ jobs:
         run: cargo build --locked --release --workspace
       - name: cargo build --release --all-features
         run: cargo build --locked --release --workspace --all-features
+      - name: version smoke
+        run: |
+          daemon_version="$(awk -F '\"' '/^version = \"/ {print $2; exit}' bins/enigma-daemon/Cargo.toml)"
+          cli_version="$(awk -F '\"' '/^version = \"/ {print $2; exit}' bins/enigma-cli/Cargo.toml)"
+          daemon_out="$(./target/release/enigma-daemon --version)"
+          cli_out="$(./target/release/enigma-cli --version)"
+          echo "$daemon_out" | grep -q "$daemon_version"
+          echo "$cli_out" | grep -q "$cli_version"
 
   policy:
     runs-on: ubuntu-latest
@@ -83,6 +91,8 @@ jobs:
         run: bash scripts/check_versions.sh
       - name: check docs
         run: bash scripts/check_docs.sh
+      - name: check deployment docs
+        run: bash scripts/check_deployment_docs.sh
 
   supply-chain:
     runs-on: ubuntu-latest
