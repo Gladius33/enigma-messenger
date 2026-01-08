@@ -108,6 +108,8 @@ level = "info"
 - Hardened systemd units for the registry, relay, and daemon live in `systemd/` and are documented in `deployment/single-node-prod.md`.
 - Compatibility and migration policy is documented in `COMPATIBILITY.md`; store migrations and CLI workflows live in `MIGRATIONS.md`.
 - Deployment runbook (canonical): `deployment/single-node-prod.md` with local dev notes in `deployment/local-dev.md` and upgrade guidance in `deployment/upgrade.md`.
+- Operational security guidance and reverse proxy notes live in `deployment/security.md`.
+- Backup and restore helpers live in `deployment/backup.sh` and `deployment/restore.sh`.
 
 How to run CI locally
 - cargo fmt --all -- --check

@@ -24,6 +24,7 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 
 mod calls_tests;
+mod config_validation_tests;
 mod harness;
 mod ui_api_tests;
 

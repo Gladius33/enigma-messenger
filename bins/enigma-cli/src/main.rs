@@ -147,12 +147,35 @@ struct DoctorKey;
 
 impl KeyProvider for DoctorKey {
     fn get_or_create_master_key(&self) -> Result<MasterKey, EnigmaStorageError> {
-        Ok(MasterKey::new([2u8; 32]))
+        load_master_key()
     }
 
     fn get_master_key(&self) -> Result<MasterKey, EnigmaStorageError> {
-        Ok(MasterKey::new([2u8; 32]))
+        load_master_key()
     }
+}
+
+fn load_master_key() -> Result<MasterKey, EnigmaStorageError> {
+    if let Ok(path) = env::var("ENIGMA_MASTER_KEY_PATH") {
+        let value = fs::read_to_string(path)
+            .map_err(|err| EnigmaStorageError::KeyProviderError(err.to_string()))?;
+        return parse_master_key(&value);
+    }
+    if let Ok(value) = env::var("ENIGMA_MASTER_KEY_HEX") {
+        return parse_master_key(&value);
+    }
+    Ok(MasterKey::new([2u8; 32]))
+}
+
+fn parse_master_key(value: &str) -> Result<MasterKey, EnigmaStorageError> {
+    let bytes = hex::decode(value.trim())
+        .map_err(|_| EnigmaStorageError::KeyProviderError("invalid master key".to_string()))?;
+    if bytes.len() != 32 {
+        return Err(EnigmaStorageError::InvalidKey);
+    }
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&bytes);
+    Ok(MasterKey::new(key))
 }
 
 #[derive(Serialize)]

@@ -379,7 +379,18 @@ impl HttpClientConfig {
 
 impl ApiConfig {
     pub fn validate(&self) -> Result<(), ConfigError> {
-        self.socket_addr()?;
+        let addr = self.socket_addr()?;
+        if !addr.ip().is_loopback() {
+            if !cfg!(feature = "ui-auth") {
+                return Err(ConfigError::Validation("api_bind_addr".to_string()));
+            }
+            let token = std::env::var("ENIGMA_UI_TOKEN")
+                .ok()
+                .filter(|value| !value.trim().is_empty());
+            if token.is_none() {
+                return Err(ConfigError::Validation("api_bind_addr".to_string()));
+            }
+        }
         Ok(())
     }
 

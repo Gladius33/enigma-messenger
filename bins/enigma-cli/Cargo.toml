@@ -14,6 +14,7 @@ enigma-core = { path = "../../crates/enigma-core", version = "0.0.4", default-fe
 enigma-daemon = { path = "../enigma-daemon", version = "0.0.4" }
 enigma-ui-api = { path = "../../crates/enigma-ui-api", version = "0.0.1" }
 enigma-storage = { workspace = true }
+hex = { workspace = true }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

@@ -41,3 +41,4 @@ Rollback guidance
 
 Security note
 - Artifacts are built from tags only; no auto-deploy to production systems.
+- Operational hardening guidance lives in `deployment/security.md`.
