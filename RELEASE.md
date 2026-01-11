@@ -19,6 +19,7 @@ Release checklist
 - Validate migrations: `enigma-cli migrate --dry-run --config /etc/enigma/daemon.toml` and apply only when required: `enigma-cli migrate --apply --yes --config /etc/enigma/daemon.toml`.
 - Tag as `vX.Y.Z` and push; tags imply a release build from that exact commit.
 - After deploying, run `deployment/smoke.sh` with `ENIGMA_CONFIG=/etc/enigma/daemon.toml` (and `ENIGMA_UI_TOKEN` if required).
+- Use `deployment/single-node-prod.md` for the canonical operator runbook and `deployment/backup.sh` + `deployment/restore.sh` for stateful rollback safety.
 
 Publish order (crates.io)
 - Internal crates published from this repo: enigma-ui-api -> enigma-core -> enigma-daemon -> enigma-cli.
