@@ -1,100 +1,510 @@
 use super::*;
-use serde::Deserialize;
-
-#[derive(Deserialize)]
-struct Envelope<T> {
-    meta: serde_json::Value,
-    data: Option<T>,
-    error: Option<serde_json::Value>,
-}
+use enigma_ui_api::{
+    ApiResponse, ContactDto, ConversationDto, IdentityInfo, MessageDto, SendMessageResponse,
+    SyncResponse,
+};
+use http_body_util::BodyExt;
+use serde::de::DeserializeOwned;
+use serde_json::Value;
+use std::sync::OnceLock;
+use tokio::sync::Mutex;
 
 async fn body_bytes(resp: Response<Incoming>) -> Vec<u8> {
     collect_bytes(resp.into_body()).await.unwrap().to_vec()
 }
 
+async fn body_full_bytes(resp: Response<Full<Bytes>>) -> Vec<u8> {
+    resp.into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes()
+        .to_vec()
+}
+
+async fn decode_response<T: DeserializeOwned>(resp: Response<Incoming>) -> ApiResponse<T> {
+    serde_json::from_slice(&body_bytes(resp).await).unwrap()
+}
+
+fn normalize_envelope(value: Value) -> Value {
+    let mut normalized = value;
+    if let Some(obj) = normalized.as_object_mut() {
+        obj.entry("data").or_insert(Value::Null);
+        if let Some(meta) = obj.get_mut("meta").and_then(|m| m.as_object_mut()) {
+            meta.insert(
+                "request_id".to_string(),
+                Value::String("request".to_string()),
+            );
+            meta.insert("timestamp_ms".to_string(), Value::Number(0.into()));
+        }
+        if let Some(error) = obj.get_mut("error").and_then(|e| e.as_object_mut()) {
+            error.entry("details").or_insert(Value::Null);
+        }
+    }
+    normalized
+}
+
+fn error_fixture(path: &'static str) -> Value {
+    serde_json::from_str(path).unwrap()
+}
+
+async fn env_guard() -> tokio::sync::MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(())).lock().await
+}
+
 #[tokio::test]
-async fn ui_health_identity_contacts_flow() {
+async fn ui_api_endpoints_return_dtos() {
+    let _guard = env_guard().await;
     let cfg = test_config(false, false, false);
     let state = build_state(&cfg).await;
     let api_addr = cfg.api.socket_addr().unwrap();
     let (addr, tx, handle) = start_server(state.clone(), api_addr).await;
-    let health = dispatch_request(
+
+    let root = decode_response::<Value>(
+        dispatch_request(state.clone(), addr, build_request("GET", "/api/v1", None)).await,
+    )
+    .await;
+    assert_eq!(
+        root.data.unwrap().get("status").and_then(|v| v.as_str()),
+        Some("ok")
+    );
+
+    let health = decode_response::<Value>(
+        dispatch_request(
+            state.clone(),
+            addr,
+            build_request("GET", "/api/v1/health", None),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(health.meta.api_version, enigma_ui_api::API_VERSION);
+
+    let identity = decode_response::<IdentityInfo>(
+        dispatch_request(
+            state.clone(),
+            addr,
+            build_request("GET", "/api/v1/identity", None),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(identity.data.unwrap().user_id.len(), 64);
+
+    let add_contact = decode_response::<ContactDto>(
+        dispatch_request(
+            state.clone(),
+            addr,
+            build_request(
+                "POST",
+                "/api/v1/contacts/add",
+                Some(serde_json::json!({"handle":"bob"})),
+            ),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(add_contact.data.unwrap().handle, "bob");
+
+    let contacts = decode_response::<Vec<ContactDto>>(
+        dispatch_request(
+            state.clone(),
+            addr,
+            build_request("GET", "/api/v1/contacts", None),
+        )
+        .await,
+    )
+    .await;
+    assert!(!contacts.data.unwrap().is_empty());
+
+    let conversation = decode_response::<ConversationDto>(
+        dispatch_request(
+            state.clone(),
+            addr,
+            build_request(
+                "POST",
+                "/api/v1/conversations/create",
+                Some(serde_json::json!({"handle":"bob"})),
+            ),
+        )
+        .await,
+    )
+    .await;
+    let convo_id = conversation.data.unwrap().id;
+
+    let send = decode_response::<SendMessageResponse>(
+        dispatch_request(
+            state.clone(),
+            addr,
+            build_request(
+                "POST",
+                "/api/v1/messages/send",
+                Some(serde_json::json!({
+                    "conversation_id": convo_id,
+                    "kind": "Text",
+                    "body": "hi"
+                })),
+            ),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(send.error, None);
+
+    let messages = decode_response::<Vec<MessageDto>>(
+        dispatch_request(
+            state.clone(),
+            addr,
+            build_request(
+                "GET",
+                &format!("/api/v1/conversations/{}/messages", convo_id),
+                None,
+            ),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(messages.data.unwrap().len(), 1);
+
+    let sync = decode_response::<SyncResponse>(
+        dispatch_request(
+            state.clone(),
+            addr,
+            build_request("POST", "/api/v1/sync", Some(serde_json::json!({}))),
+        )
+        .await,
+    )
+    .await;
+    assert!(sync.data.unwrap().next_cursor.is_some());
+
+    let stats = decode_response::<Value>(
+        dispatch_request(
+            state.clone(),
+            addr,
+            build_request("GET", "/api/v1/stats", None),
+        )
+        .await,
+    )
+    .await;
+    assert!(stats.data.unwrap().get("user_id_hex").is_some());
+
+    let _ = tx.send(());
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;
+}
+
+#[tokio::test]
+async fn ui_api_messages_pagination_is_deterministic() {
+    let _guard = env_guard().await;
+    let cfg = test_config(false, false, false);
+    let state = build_state(&cfg).await;
+    let api_addr = cfg.api.socket_addr().unwrap();
+    let (addr, tx, handle) = start_server(state.clone(), api_addr).await;
+
+    let conversation = decode_response::<ConversationDto>(
+        dispatch_request(
+            state.clone(),
+            addr,
+            build_request(
+                "POST",
+                "/api/v1/conversations/create",
+                Some(serde_json::json!({"handle":"bob"})),
+            ),
+        )
+        .await,
+    )
+    .await;
+    let convo_id = conversation.data.unwrap().id;
+
+    for body in ["one", "two", "three"] {
+        let _ = decode_response::<SendMessageResponse>(
+            dispatch_request(
+                state.clone(),
+                addr,
+                build_request(
+                    "POST",
+                    "/api/v1/messages/send",
+                    Some(serde_json::json!({
+                        "conversation_id": convo_id,
+                        "kind": "Text",
+                        "body": body
+                    })),
+                ),
+            )
+            .await,
+        )
+        .await;
+    }
+
+    let page_one = decode_response::<Vec<MessageDto>>(
+        dispatch_request(
+            state.clone(),
+            addr,
+            build_request(
+                "GET",
+                &format!(
+                    "/api/v1/conversations/{}/messages?cursor=0&limit=2",
+                    convo_id
+                ),
+                None,
+            ),
+        )
+        .await,
+    )
+    .await;
+    let page_one = page_one.data.unwrap();
+    assert_eq!(page_one.len(), 2);
+    assert_eq!(
+        page_one
+            .iter()
+            .map(|msg| msg.body_preview.clone().unwrap_or_default())
+            .collect::<Vec<_>>(),
+        vec!["one".to_string(), "two".to_string()]
+    );
+
+    let page_two = decode_response::<Vec<MessageDto>>(
+        dispatch_request(
+            state.clone(),
+            addr,
+            build_request(
+                "GET",
+                &format!(
+                    "/api/v1/conversations/{}/messages?cursor=2&limit=2",
+                    convo_id
+                ),
+                None,
+            ),
+        )
+        .await,
+    )
+    .await;
+    let page_two = page_two.data.unwrap();
+    assert_eq!(page_two.len(), 1);
+    assert_eq!(
+        page_two[0].body_preview.clone().unwrap_or_default(),
+        "three".to_string()
+    );
+
+    let _ = tx.send(());
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;
+}
+
+#[tokio::test]
+async fn ui_api_sync_cursor_monotonic() {
+    let _guard = env_guard().await;
+    let cfg = test_config(false, false, false);
+    let state = build_state(&cfg).await;
+    let api_addr = cfg.api.socket_addr().unwrap();
+    let (addr, tx, handle) = start_server(state.clone(), api_addr).await;
+
+    let conversation = decode_response::<ConversationDto>(
+        dispatch_request(
+            state.clone(),
+            addr,
+            build_request(
+                "POST",
+                "/api/v1/conversations/create",
+                Some(serde_json::json!({"handle":"bob"})),
+            ),
+        )
+        .await,
+    )
+    .await;
+    let convo_id = conversation.data.unwrap().id;
+
+    let _ = decode_response::<SendMessageResponse>(
+        dispatch_request(
+            state.clone(),
+            addr,
+            build_request(
+                "POST",
+                "/api/v1/messages/send",
+                Some(serde_json::json!({
+                    "conversation_id": convo_id,
+                    "kind": "Text",
+                    "body": "first"
+                })),
+            ),
+        )
+        .await,
+    )
+    .await;
+
+    let _ = decode_response::<ContactDto>(
+        dispatch_request(
+            state.clone(),
+            addr,
+            build_request(
+                "POST",
+                "/api/v1/contacts/add",
+                Some(serde_json::json!({"handle":"carol"})),
+            ),
+        )
+        .await,
+    )
+    .await;
+
+    let sync_one = decode_response::<SyncResponse>(
+        dispatch_request(
+            state.clone(),
+            addr,
+            build_request(
+                "POST",
+                "/api/v1/sync",
+                Some(serde_json::json!({ "limit": 1 })),
+            ),
+        )
+        .await,
+    )
+    .await;
+    let cursor_one = sync_one.data.unwrap().next_cursor.unwrap();
+
+    let sync_two = decode_response::<SyncResponse>(
+        dispatch_request(
+            state.clone(),
+            addr,
+            build_request(
+                "POST",
+                "/api/v1/sync",
+                Some(serde_json::json!({ "cursor": cursor_one, "limit": 1 })),
+            ),
+        )
+        .await,
+    )
+    .await;
+    let cursor_two = sync_two.data.unwrap().next_cursor.unwrap();
+    assert!(cursor_two > cursor_one);
+
+    let _ = tx.send(());
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;
+}
+
+#[tokio::test]
+async fn ui_error_snapshot_validation() {
+    let _guard = env_guard().await;
+    let cfg = test_config(false, false, false);
+    let state = build_state(&cfg).await;
+    let api_addr = cfg.api.socket_addr().unwrap();
+    let (addr, tx, handle) = start_server(state.clone(), api_addr).await;
+
+    let request = Request::builder()
+        .method("POST")
+        .uri("/api/v1/messages/send")
+        .header(CONTENT_TYPE, "application/json")
+        .body(Full::from(Bytes::from("{")))
+        .unwrap();
+    let resp = dispatch_request(state.clone(), addr, request).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body: Value = serde_json::from_slice(&body_bytes(resp).await).unwrap();
+    let normalized = normalize_envelope(body);
+    let expected = error_fixture(include_str!("fixtures/error_validation.json"));
+    assert_eq!(normalized, expected);
+
+    let _ = tx.send(());
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;
+}
+
+#[cfg(feature = "ui-auth")]
+#[tokio::test]
+async fn ui_error_snapshot_auth() {
+    let _guard = env_guard().await;
+    let cfg = test_config(false, false, false);
+    let state = build_state(&cfg).await;
+    let api_addr = cfg.api.socket_addr().unwrap();
+    let (addr, tx, handle) = start_server(state.clone(), api_addr).await;
+
+    let prev = std::env::var("ENIGMA_UI_TOKEN").ok();
+    std::env::set_var("ENIGMA_UI_TOKEN", "token");
+
+    let resp = dispatch_request(
         state.clone(),
         addr,
         build_request("GET", "/api/v1/health", None),
     )
     .await;
-    assert_eq!(health.status(), StatusCode::OK);
-    let health_body: Envelope<serde_json::Value> =
-        serde_json::from_slice(&body_bytes(health).await).unwrap();
-    assert!(health_body.error.is_none());
-    assert_eq!(
-        health_body.meta.get("api_version").and_then(|v| v.as_u64()),
-        Some(enigma_ui_api::API_VERSION as u64)
-    );
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    let body: Value = serde_json::from_slice(&body_bytes(resp).await).unwrap();
+    let normalized = normalize_envelope(body);
+    let expected = error_fixture(include_str!("fixtures/error_auth.json"));
+    assert_eq!(normalized, expected);
 
-    let identity = dispatch_request(
+    let mut req = build_request("GET", "/api/v1/health", None);
+    req.headers_mut()
+        .insert("authorization", "Bearer wrong".parse().unwrap());
+    let resp = dispatch_request(state.clone(), addr, req).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    let body: Value = serde_json::from_slice(&body_bytes(resp).await).unwrap();
+    let normalized = normalize_envelope(body);
+    assert_eq!(normalized, expected);
+
+    if let Some(prev) = prev {
+        std::env::set_var("ENIGMA_UI_TOKEN", prev);
+    } else {
+        std::env::remove_var("ENIGMA_UI_TOKEN");
+    }
+
+    let _ = tx.send(());
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;
+}
+
+#[tokio::test]
+async fn ui_error_snapshot_not_found() {
+    let _guard = env_guard().await;
+    let cfg = test_config(false, false, false);
+    let state = build_state(&cfg).await;
+    let api_addr = cfg.api.socket_addr().unwrap();
+    let (addr, tx, handle) = start_server(state.clone(), api_addr).await;
+
+    let resp = dispatch_request(
         state.clone(),
         addr,
-        build_request("GET", "/api/v1/identity", None),
+        build_request("GET", "/api/v1/does-not-exist", None),
     )
     .await;
-    assert_eq!(identity.status(), StatusCode::OK);
-    let body: Envelope<serde_json::Value> =
-        serde_json::from_slice(&body_bytes(identity).await).unwrap();
-    assert!(body.data.is_some());
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let body: Value = serde_json::from_slice(&body_bytes(resp).await).unwrap();
+    let normalized = normalize_envelope(body);
+    let expected = error_fixture(include_str!("fixtures/error_not_found.json"));
+    assert_eq!(normalized, expected);
 
-    let add_contact = dispatch_request(
-        state.clone(),
-        addr,
-        build_request(
-            "POST",
-            "/api/v1/contacts/add",
-            Some(serde_json::json!({"handle":"bob"})),
-        ),
+    let _ = tx.send(());
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;
+}
+
+#[tokio::test]
+async fn ui_error_snapshot_conflict() {
+    let resp = ui_error(StatusCode::CONFLICT, "CONFLICT", "conflict", None);
+    let body: Value = serde_json::from_slice(&body_full_bytes(resp).await).unwrap();
+    let normalized = normalize_envelope(body);
+    let expected = error_fixture(include_str!("fixtures/error_conflict.json"));
+    assert_eq!(normalized, expected);
+}
+
+#[tokio::test]
+async fn ui_error_snapshot_internal() {
+    let _guard = env_guard().await;
+    let mut cfg = test_config(false, false, false);
+    cfg.policy.max_text_bytes = 1;
+    let state = build_state(&cfg).await;
+    let api_addr = cfg.api.socket_addr().unwrap();
+    let (addr, tx, handle) = start_server(state.clone(), api_addr).await;
+
+    let conversation = decode_response::<ConversationDto>(
+        dispatch_request(
+            state.clone(),
+            addr,
+            build_request(
+                "POST",
+                "/api/v1/conversations/create",
+                Some(serde_json::json!({"handle":"bob"})),
+            ),
+        )
+        .await,
     )
     .await;
-    assert_eq!(add_contact.status(), StatusCode::OK);
-    let add_body: Envelope<serde_json::Value> =
-        serde_json::from_slice(&body_bytes(add_contact).await).unwrap();
-    assert!(add_body.error.is_none());
+    let convo_id = conversation.data.unwrap().id;
 
-    let contacts = dispatch_request(
-        state.clone(),
-        addr,
-        build_request("GET", "/api/v1/contacts", None),
-    )
-    .await;
-    assert_eq!(contacts.status(), StatusCode::OK);
-    let list: Envelope<Vec<serde_json::Value>> =
-        serde_json::from_slice(&body_bytes(contacts).await).unwrap();
-    assert!(!list.data.unwrap().is_empty());
-
-    let conversation = dispatch_request(
-        state.clone(),
-        addr,
-        build_request(
-            "POST",
-            "/api/v1/conversations/create",
-            Some(serde_json::json!({"handle":"bob"})),
-        ),
-    )
-    .await;
-    assert_eq!(conversation.status(), StatusCode::OK);
-    let convo_body: Envelope<serde_json::Value> =
-        serde_json::from_slice(&body_bytes(conversation).await).unwrap();
-    let convo_id = convo_body
-        .data
-        .unwrap()
-        .get("id")
-        .unwrap()
-        .as_str()
-        .unwrap()
-        .to_string();
-    assert!(convo_body.error.is_none());
-    assert!(convo_body.meta.get("request_id").is_some());
-
-    let send = dispatch_request(
+    let resp = dispatch_request(
         state.clone(),
         addr,
         build_request(
@@ -103,51 +513,44 @@ async fn ui_health_identity_contacts_flow() {
             Some(serde_json::json!({
                 "conversation_id": convo_id,
                 "kind": "Text",
-                "body": "hi"
+                "body": "toolong"
             })),
         ),
     )
     .await;
-    assert_eq!(send.status(), StatusCode::OK);
-    let send_body: Envelope<serde_json::Value> =
-        serde_json::from_slice(&body_bytes(send).await).unwrap();
-    assert!(send_body.error.is_none());
+    assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let body: Value = serde_json::from_slice(&body_bytes(resp).await).unwrap();
+    let normalized = normalize_envelope(body);
+    let expected = error_fixture(include_str!("fixtures/error_internal.json"));
+    assert_eq!(normalized, expected);
 
-    let messages = dispatch_request(
-        state.clone(),
-        addr,
-        build_request(
-            "GET",
-            &format!("/api/v1/conversations/{}/messages", convo_id),
-            None,
-        ),
-    )
-    .await;
-    assert_eq!(messages.status(), StatusCode::OK);
-    let msgs: Envelope<Vec<serde_json::Value>> =
-        serde_json::from_slice(&body_bytes(messages).await).unwrap();
-    assert_eq!(msgs.data.unwrap().len(), 1);
-
-    let sync = dispatch_request(
-        state.clone(),
-        addr,
-        build_request("POST", "/api/v1/sync", Some(serde_json::json!({}))),
-    )
-    .await;
-    assert_eq!(sync.status(), StatusCode::OK);
-    let sync_body: Envelope<serde_json::Value> =
-        serde_json::from_slice(&body_bytes(sync).await).unwrap();
-    assert!(sync_body.error.is_none());
     let _ = tx.send(());
     let _ = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;
 }
 
 #[tokio::test]
-async fn ui_errors_are_structured() {
+async fn ui_error_invalid_message_kind_is_structured() {
+    let _guard = env_guard().await;
     let cfg = test_config(false, false, false);
     let state = build_state(&cfg).await;
     let api_addr = cfg.api.socket_addr().unwrap();
     let (addr, tx, handle) = start_server(state.clone(), api_addr).await;
+
+    let conversation = decode_response::<ConversationDto>(
+        dispatch_request(
+            state.clone(),
+            addr,
+            build_request(
+                "POST",
+                "/api/v1/conversations/create",
+                Some(serde_json::json!({"handle":"bob"})),
+            ),
+        )
+        .await,
+    )
+    .await;
+    let convo_id = conversation.data.unwrap().id;
+
     let resp = dispatch_request(
         state.clone(),
         addr,
@@ -155,68 +558,24 @@ async fn ui_errors_are_structured() {
             "POST",
             "/api/v1/messages/send",
             Some(serde_json::json!({
-                "conversation_id": "missing",
-                "kind": "Text",
+                "conversation_id": convo_id,
+                "kind": "Nope",
                 "body": "hi"
             })),
         ),
     )
     .await;
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-    let body: Envelope<serde_json::Value> =
-        serde_json::from_slice(&body_bytes(resp).await).unwrap();
-    assert!(body.data.is_none());
-    assert!(body.error.is_some());
-    assert!(body.meta.get("timestamp_ms").is_some());
-    let _ = tx.send(());
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;
-}
+    let body: Value = serde_json::from_slice(&body_bytes(resp).await).unwrap();
+    let normalized = normalize_envelope(body);
+    assert_eq!(
+        normalized
+            .get("error")
+            .and_then(|err| err.get("code"))
+            .and_then(|code| code.as_str()),
+        Some("INVALID_MESSAGE_KIND")
+    );
 
-#[tokio::test]
-async fn ui_error_envelope_matches_snapshot() {
-    let cfg = test_config(false, false, false);
-    let state = build_state(&cfg).await;
-    let api_addr = cfg.api.socket_addr().unwrap();
-    let (addr, tx, handle) = start_server(state.clone(), api_addr).await;
-    let resp = dispatch_request(
-        state.clone(),
-        addr,
-        build_request("GET", "/api/v1/does-not-exist", None),
-    )
-    .await;
-    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
-    let body: serde_json::Value = serde_json::from_slice(&body_bytes(resp).await).unwrap();
-    let mut normalized = body.clone();
-    if let Some(obj) = normalized.as_object_mut() {
-        obj.entry("data").or_insert(serde_json::Value::Null);
-    }
-    if let Some(meta) = normalized.get_mut("meta").and_then(|m| m.as_object_mut()) {
-        meta.insert(
-            "request_id".to_string(),
-            serde_json::Value::String("request".to_string()),
-        );
-        meta.insert(
-            "timestamp_ms".to_string(),
-            serde_json::Value::Number(0.into()),
-        );
-    }
-    if let Some(error) = normalized.get_mut("error").and_then(|e| e.as_object_mut()) {
-        error.entry("details").or_insert(serde_json::Value::Null);
-    }
-    let expected = serde_json::json!({
-        "meta": {
-            "api_version": enigma_ui_api::API_VERSION,
-            "request_id": "request",
-            "timestamp_ms": 0
-        },
-        "data": serde_json::Value::Null,
-        "error": {
-            "code": "NOT_FOUND",
-            "message": "not found",
-            "details": serde_json::Value::Null
-        }
-    });
-    assert_eq!(normalized, expected);
     let _ = tx.send(());
     let _ = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;
 }

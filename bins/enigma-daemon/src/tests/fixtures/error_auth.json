@@ -1,0 +1,13 @@
+{
+  "meta": {
+    "api_version": 1,
+    "request_id": "request",
+    "timestamp_ms": 0
+  },
+  "data": null,
+  "error": {
+    "code": "UNAUTHORIZED",
+    "message": "missing or invalid token",
+    "details": null
+  }
+}

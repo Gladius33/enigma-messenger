@@ -998,6 +998,7 @@ async fn handle_ui_request(
                     }
                 }
             }
+            limit = limit.min(200);
             let messages = {
                 let mut store = state.ui_messages.lock().await;
                 let list = store.entry(conv_id.to_string()).or_default();
@@ -1089,7 +1090,7 @@ async fn handle_ui_request(
             Ok(p) => p,
             Err(resp) => return Ok(resp),
         };
-        let limit = payload.limit.unwrap_or(50);
+        let limit = payload.limit.unwrap_or(50).min(200);
         let (events, next) = {
             let log = state.ui_events.lock().await;
             log.since(payload.cursor, limit)
