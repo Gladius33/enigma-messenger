@@ -94,6 +94,35 @@ jobs:
       - name: check deployment docs
         run: bash scripts/check_deployment_docs.sh
 
+  release-ready:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: check pinned versions
+        run: bash scripts/check_versions.sh
+      - name: check docs
+        run: bash scripts/check_docs.sh
+      - name: check deployment docs
+        run: bash scripts/check_deployment_docs.sh
+      - name: cargo fmt
+        run: cargo fmt --all -- --check
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: cargo test
+        run: cargo test --locked
+      - name: cargo test --all-features
+        run: cargo test --locked --all-features
+      - name: cargo build --release
+        run: cargo build --locked --release --workspace
+      - name: cargo build --release --all-features
+        run: cargo build --locked --release --workspace --all-features
+      - name: release build
+        run: ./scripts/release_build.sh
+
   supply-chain:
     runs-on: ubuntu-latest
     continue-on-error: true

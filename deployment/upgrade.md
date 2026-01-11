@@ -8,3 +8,9 @@
 - Run `enigma-cli migrate --dry-run --config /etc/enigma/daemon.toml` and apply with `--apply --yes` when required.
 - For single-node restarts: `systemctl daemon-reload && systemctl restart enigma-node-registry enigma-relay enigma-daemon`, then run `deployment/smoke.sh`.
 - In multi-node setups, upgrade one host at a time: drain clients from the relay, restart the registry and daemon on that host, confirm health, then move to the next node.
+
+## Rollback
+- Stop services: `systemctl stop enigma-daemon enigma-relay enigma-node-registry`.
+- Restore the previous binaries and configs (keep a copy alongside each release).
+- Restore state with `ENIGMA_BACKUP_PATH=/var/backups/enigma/daemon-backup.tar.gz deployment/restore.sh`.
+- Run `enigma-cli doctor --config /etc/enigma/daemon.toml` and `deployment/smoke.sh`, then start services.

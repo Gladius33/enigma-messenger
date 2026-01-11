@@ -26,6 +26,7 @@ PY
 
 bash scripts/check_versions.sh
 bash scripts/check_docs.sh
+bash scripts/check_deployment_docs.sh
 
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
@@ -48,11 +49,13 @@ done < <(metadata_versions)
 
 daemon_artifact="enigma-daemon-${daemon_version}-${TARGET}-${PROFILE}"
 cli_artifact="enigma-cli-${cli_version}-${TARGET}-${PROFILE}"
+deployment_artifact="enigma-deployment-${daemon_version}-${TARGET}-${PROFILE}.tar.gz"
 
 rm -rf "$ROOT/dist"
 mkdir -p "$ROOT/dist"
 cp "$ROOT/target/$TARGET/release/enigma-daemon" "$ROOT/dist/$daemon_artifact"
 cp "$ROOT/target/$TARGET/release/enigma-cli" "$ROOT/dist/$cli_artifact"
+tar -czf "$ROOT/dist/$deployment_artifact" deployment systemd MIGRATIONS.md COMPATIBILITY.md RELEASE.md API.md
 
 cat > "$ROOT/dist/manifest.json" <<EOF
 {
@@ -69,10 +72,22 @@ cat > "$ROOT/dist/manifest.json" <<EOF
 }
 EOF
 
+manifest_keys="$(awk -F '"' '/^  "/ {print $2}' "$ROOT/dist/manifest.json" | tr '\n' ' ')"
+expected_keys="target profile rustc features crates "
+if [ "$manifest_keys" != "$expected_keys" ]; then
+  echo "manifest.json key order mismatch" >&2
+  exit 1
+fi
+if grep -qi "timestamp" "$ROOT/dist/manifest.json"; then
+  echo "manifest.json contains timestamp" >&2
+  exit 1
+fi
+
 (cd "$ROOT/dist" && sha256sum "$daemon_artifact" > "${daemon_artifact}.sha256")
 (cd "$ROOT/dist" && sha256sum "$cli_artifact" > "${cli_artifact}.sha256")
+(cd "$ROOT/dist" && sha256sum "$deployment_artifact" > "${deployment_artifact}.sha256")
 (cd "$ROOT/dist" && sha256sum manifest.json > manifest.json.sha256)
-(cd "$ROOT/dist" && sha256sum "$daemon_artifact" "$cli_artifact" manifest.json > SHA256SUMS)
+(cd "$ROOT/dist" && sha256sum "$daemon_artifact" "$cli_artifact" "$deployment_artifact" manifest.json > SHA256SUMS)
 
 cat <<EOF
 Release artifacts staged in dist/
