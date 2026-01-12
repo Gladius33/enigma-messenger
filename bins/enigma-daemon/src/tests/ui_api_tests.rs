@@ -80,6 +80,7 @@ async fn ui_api_endpoints_return_dtos() {
     )
     .await;
     assert_eq!(health.meta.api_version, enigma_ui_api::API_VERSION);
+    assert_eq!(health.data, Some(serde_json::json!({"status":"ok"})));
 
     let identity = decode_response::<IdentityInfo>(
         dispatch_request(

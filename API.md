@@ -9,50 +9,82 @@ The daemon exposes a local HTTP API under `/api/v1` for UI clients. Responses al
 - If the daemon binds the UI API to a non-loopback address, `ui-auth` must be enabled and `ENIGMA_UI_TOKEN` must be set.
 
 ## Endpoints
-- `GET /api/v1/health` → `{ status: "ok" }`
+- `GET /api/v1/health` → `{ "status": "ok" }` (data payload)
 - `GET /api/v1/identity` → `IdentityInfo`
-- `POST /api/v1/contacts/add` body `{ handle?: string, user_id?: string, display_name?: string }` → `Contact`
+- `POST /api/v1/contacts/add` body `ContactAddRequest` → `Contact`
 - `GET /api/v1/contacts` → `[Contact]`
-- `POST /api/v1/conversations/create` body `{ handle?: string, user_id?: string, title?: string }` → `Conversation`
+- `POST /api/v1/conversations/create` body `ConversationCreateRequest` → `Conversation`
 - `GET /api/v1/conversations` → `[Conversation]`
 - `GET /api/v1/conversations/{id}/messages?cursor=&limit=` → `[Message]`
 - `POST /api/v1/messages/send` body `SendMessageRequest` → `SendMessageResponse`
 - `POST /api/v1/sync` body `SyncRequest` → `SyncResponse` (events with optional `next_cursor`)
 - `GET /api/v1/stats` → `Stats` (minimal runtime stats + capabilities/policy caps)
 
-## Pagination and sync semantics
-- `GET /api/v1/conversations/{id}/messages` returns messages in deterministic insertion order. `cursor` is a zero-based offset; `limit` defaults to 50 and is capped at 200. When `cursor` is past the end, an empty list is returned.
-- `POST /api/v1/sync` returns events ordered by a monotonic cursor. `cursor` is exclusive; `next_cursor` is the last delivered cursor when events are returned, or `null` when no events exist. `limit` defaults to 50 and is capped at 200. Cursors are in-memory and reset on daemon restart.
+## DTO definitions
+Primitive conventions:
+- `UUID`: RFC 4122 hyphenated string.
+- `user_id`: 64-char lowercase hex string.
+- `timestamp_ms`: `u64` milliseconds since Unix epoch.
 
-## DTO snapshots (see `crates/enigma-ui-api`)
-- `IdentityInfo { user_id, handle?, devices: [DeviceInfo], has_bundle_v2, created_ms }`
-- `Contact { user_id, handle, display_name?, last_seen_ms }`
-- `Conversation { id, kind: Direct|Group|Channel, title?, members, unread_count, last_message? }`
-- `Message { id, conversation_id, sender, sent_ms, edited_ms?, kind, body_preview?, attachments_meta?, status: Pending|Sent|Delivered }`
-- `SendMessageRequest { conversation_id, kind, body? }`
-- `SyncResponse { events: [Event], next_cursor? }` where `Event` is currently `Message` or `ContactAdded`
+### HealthResponse
+`/api/v1/health` data payload is exactly:
+- `HealthResponse { status: "ok" }`
+
+### IdentityInfo
+- `IdentityInfo { user_id: string (user_id), handle?: string, devices: [DeviceInfo], has_bundle_v2: bool, created_ms: u64 }`
+- `DeviceInfo { device_id: string (UUID), last_seen_ms: u64 }`
+
+### Contact
+- `Contact { user_id: string (user_id), handle: string, display_name?: string, last_seen_ms: u64 }`
+
+### ContactAddRequest
+- `ContactAddRequest { handle?: string, user_id?: string, display_name?: string }`
+- Exactly one of `handle` or `user_id` is required. If both are provided, `user_id` takes precedence.
+
+### Conversation
+- `Conversation { id: string, kind: "Direct"|"Group"|"Channel", title?: string, members: [string], unread_count: u32, last_message?: Message }`
+
+### ConversationCreateRequest
+- `ConversationCreateRequest { handle?: string, user_id?: string, title?: string }`
+- Exactly one of `handle` or `user_id` is required for direct conversations. If both are provided, `user_id` takes precedence.
+
+### Message
+- `Message { id: string (UUID), conversation_id: string, sender: string (user_id), sent_ms: u64, edited_ms?: u64, kind: MessageKind, body_preview?: string, attachments_meta?: object, status: "Pending"|"Sent"|"Delivered" }`
+- `body_preview` is a short preview and may be omitted. The full body is not returned in UI API v1; do not assume it is available in `Message`.
+- `attachments_meta` is omitted when empty. When present, its shape is described in the Attachments section.
+
+### SendMessageRequest
+- `SendMessageRequest { conversation_id: string, kind: MessageKind, body?: string, attachment_id?: UUID (planned), attachment?: AttachmentDescriptor (planned), attachment_bytes_b64?: string (planned) }`
+- `conversation_id` and `kind` are required. `body` is required for `Text`.
+- Non-text kinds require attachments (planned). Until attachments endpoints are implemented, only `Text` is supported.
+- Planned fields are currently ignored by the daemon.
+
+### SendMessageResponse
+- `SendMessageResponse { message_id: string (UUID), status: "Pending"|"Sent"|"Delivered" }`
+- No `accepted` flag or timestamps are included in this response.
+
+### SyncRequest
+- `SyncRequest { cursor?: u64, limit?: u64 }`
+- Defaults: `limit` = 50, capped at 200.
+
+### SyncResponse
+- `SyncResponse { events: [Event], next_cursor?: u64 }`
+- `Event` is a tagged object with a `type` field:
+  - Message event: `{ type: "Message", ...Message }`
+  - Contact event: `{ type: "ContactAdded", ...Contact }`
 
 ## Stats payload (/api/v1/stats)
 `GET /api/v1/stats` returns a stable, non-secret payload:
-- `Stats { user_id_hex, device_id, conversations, groups, channels, pending_outbox, directory_len, capabilities, policy_caps? }`
+- `Stats { user_id_hex: string (user_id), device_id: string (UUID), conversations: u64, groups: u64, channels: u64, pending_outbox: u64, directory_len: u64, capabilities: Capabilities, policy_caps?: PolicyCaps }`
 
 ### Capabilities
-- `ui_api_v1`: true
-- `ui_auth_enabled`: true when the daemon enforces `Authorization: Bearer` (feature `ui-auth` + token check active)
-- `proto_v1`: true
-- `proto_v2`: true when compiled with protocol V2 support
-- `relay_enabled`, `registry_enabled`, `transport_webrtc_enabled`, `sfu_enabled`, `calls_enabled`: reflect daemon config
-- `attachments_ui_api`: false (attachments endpoints not implemented yet)
-- `attachments_inline_enabled`: true when inline media is allowed (`max_inline_media_bytes > 0` and attachments are not disabled)
-- `pagination_limit_cap`: 200
-- `sync_limit_cap`: 200
+- `Capabilities { ui_api_v1: bool, ui_auth_enabled: bool, proto_v1: bool, proto_v2: bool, relay_enabled: bool, registry_enabled: bool, transport_webrtc_enabled: bool, sfu_enabled: bool, calls_enabled: bool, attachments_ui_api: bool, attachments_inline_enabled: bool, pagination_limit_cap: u32, sync_limit_cap: u32 }`
+- `ui_auth_enabled` is true when the daemon enforces `Authorization: Bearer` (feature `ui-auth` + `ENIGMA_UI_TOKEN` set).
+- `attachments_ui_api` is false until attachment endpoints are implemented.
+- `attachments_inline_enabled` is true when `max_inline_media_bytes > 0` and attachments are not disabled.
 
-### policy_caps (optional)
-Small, non-secret limits from daemon policy:
-- `max_text_bytes`
-- `max_inline_media_bytes`
-- `max_attachment_chunk_bytes`
-- `max_attachment_parallel_chunks`
+### PolicyCaps (optional)
+- `PolicyCaps { max_text_bytes: u64, max_inline_media_bytes: u64, max_attachment_chunk_bytes: u64, max_attachment_parallel_chunks: u64 }`
 
 ### UI guidance
 - Use `capabilities.pagination_limit_cap` and `capabilities.sync_limit_cap` to cap page sizes for `/conversations/{id}/messages` and `/sync`.
@@ -60,21 +92,56 @@ Small, non-secret limits from daemon policy:
 - Hide or disable attachment upload UI when `attachments_ui_api` is false.
 - Allow inline media only when `attachments_inline_enabled` is true and `max_inline_media_bytes` is respected.
 
+## Message kinds
+Allowed kinds (case-insensitive input; canonical form shown):
+- `Text`, `File`, `Image`, `Video`, `Voice`, `System`, `CallSignal`, `ChannelPost`, `GroupEvent`
+Unknown kinds return `INVALID_MESSAGE_KIND` with HTTP 400.
+
+## Semantics
+### Pagination
+- `GET /api/v1/conversations/{id}/messages` returns messages in deterministic insertion order.
+- `cursor` is a zero-based offset; `limit` defaults to 50 and is capped at 200.
+- When `cursor` is past the end, an empty list is returned.
+
+### Sync cursor
+- `POST /api/v1/sync` returns events ordered by a monotonic cursor.
+- `cursor` is exclusive; `next_cursor` is the last delivered cursor when events are returned, or `null` when no events exist.
+- Cursors are in-memory and reset on daemon restart.
+- UI should treat a smaller `next_cursor` (or `null` after previously non-null) as a restart and perform a full refresh before resuming sync.
+
+### Idempotency
+- `contacts/add` and `conversations/create` can be safely retried.
+- `messages/send` is not idempotent.
+- Attachment chunk uploads are idempotent per sequence (planned).
+
+## Errors
+Errors use the standard envelope (`{ meta, error }`); `details` may be present.
+
+Common status mappings (non-exhaustive):
+- 400: `INVALID_BODY`, `INVALID_REQUEST`, `INVALID_USER`, `INVALID_HANDLE`, `INVALID_MESSAGE_KIND`, `UNKNOWN_CONVERSATION`
+- 401: `UNAUTHORIZED`
+- 404: `NOT_FOUND`
+- 409: `CONFLICT`, `CHUNK_CONFLICT` (planned)
+- 413: `ATTACHMENT_TOO_LARGE`, `CHUNK_TOO_LARGE` (planned)
+- 429: `RATE_LIMITED` (planned)
+- 500: `SEND_FAILED`
+
 ## Attachments (planned; not yet implemented in the daemon UI API)
 This section defines the stable, additive contract for attachment upload/download. It aligns with the core chunking behavior and relay ack semantics, but the UI endpoints below are not yet exposed by the daemon. UI clients should feature-flag until the implementation lands.
 
 ### Attachment DTOs
-- `AttachmentDescriptor { id: UUID, filename?, content_type, total_size }`
-- `AttachmentMeta { id: UUID, filename?, content_type, total_size, chunk_size, chunk_count }`
-- `AttachmentUploadInitRequest { filename?, content_type, total_size }`
-- `AttachmentUploadInitResponse { attachment: AttachmentMeta, max_parallel_chunks }`
-- `AttachmentChunkUploadRequest { bytes_b64 }`
+- `AttachmentDescriptor { id: UUID, filename?: string, content_type: string, total_size: u64 }`
+- `AttachmentMeta { id: UUID, filename?: string, content_type: string, total_size: u64, chunk_size: u64, chunk_count: u64 }`
+- `AttachmentUploadInitRequest { filename?: string, content_type: string, total_size: u64 }`
+- `AttachmentUploadInitResponse { attachment: AttachmentMeta, max_parallel_chunks: u64 }`
+- `AttachmentChunkUploadRequest { bytes_b64: string }`
 - `AttachmentChunkUploadResponse { attachment_id: UUID, sequence: u64, received_bytes: u64 }`
 - `AttachmentFinalizeResponse { attachment: AttachmentMeta, status: "ready" }`
 - `AttachmentInfoResponse { attachment: AttachmentMeta, state: "uploading"|"ready" }`
-- `AttachmentChunkResponse { attachment_id: UUID, sequence: u64, chunk_count: u64, bytes_b64, is_last }`
+- `AttachmentChunkResponse { attachment_id: UUID, sequence: u64, chunk_count: u64, bytes_b64: string, is_last: bool }`
 
-`Message.attachments_meta` is `{"items":[AttachmentMeta]}` when a message carries attachments (currently one item only). `attachments_meta` is omitted otherwise.
+`Message.attachments_meta` is `{ "items": [AttachmentMeta] }` when a message carries attachments (currently one item only). `attachments_meta` is omitted otherwise.
+Indexing: UI upload/download uses `sequence` (1-based). Relay ack uses `chunk_index` (0-based).
 
 ### Workflow (upload -> send -> download)
 1) `POST /api/v1/attachments/uploads` to create an upload session and obtain `chunk_size` and `chunk_count`.
@@ -84,7 +151,7 @@ This section defines the stable, additive contract for attachment upload/downloa
 5) `GET /api/v1/attachments/{attachment_id}` to fetch metadata.
 6) `GET /api/v1/attachments/{attachment_id}/chunks/{sequence}` to download chunks and reassemble locally.
 
-### Endpoints
+### Planned attachment endpoints
 - Planned: `POST /api/v1/attachments/uploads`
   - Request: `AttachmentUploadInitRequest`
   - Response: `AttachmentUploadInitResponse` (`201`)
@@ -135,6 +202,7 @@ Errors use the standard envelope (`{ meta, error }`). Messages are human-readabl
 - `max_attachment_parallel_chunks`: recommended upper bound for in-flight chunk uploads/downloads.
 - `total_size` must be > 0; the daemon rejects `total_size` that exceeds policy or configured storage limits (`413 ATTACHMENT_TOO_LARGE`).
 - `sequence` is 1-based and must be within `1..=chunk_count`. `chunk_count = ceil(total_size / chunk_size)`.
+- Relay ack uses `chunk_index` (0-based) and is distinct from UI `sequence`.
 - Chunked transfers are index-based; there is no list pagination beyond `chunk_count`.
 - `allow_attachments` disables all attachment endpoints and attachment fields in `/api/v1/messages/send` with `403 ATTACHMENTS_DISABLED`.
 
@@ -148,7 +216,7 @@ Errors use the standard envelope (`{ meta, error }`). Messages are human-readabl
 ### Attachments, conversations, relay, and inline media
 - Attachments are scoped to the message that references them; the `conversation_id` on `/api/v1/messages/send` determines recipients.
 - The canonical recipient string is the lowercase hex `user_id` (same as `IdentityInfo.user_id`); relay/offline delivery uses that value.
-- Relay 0.0.3 uses `pull` items and `ack` entries `{ message_id, chunk_index }`; each attachment chunk is acked independently. `chunk_index` in relay is 0-based and distinct from the UI upload `sequence`.
+- Relay 0.0.3 uses `pull` items and `ack` entries `{ message_id, chunk_index }`; each attachment chunk is acked independently.
 - Inline media is for small payloads embedded in `/api/v1/messages/send` (<= `max_inline_media_bytes`). Larger media should use the chunked attachment upload flow.
 
 ### Examples
@@ -189,8 +257,15 @@ Download chunk:
 }
 ```
 
+## UI boot handshake
+- `GET /api/v1/health`
+- `GET /api/v1/stats` (capabilities + policy caps)
+- `GET /api/v1/identity`
+- Initial refresh: `GET /api/v1/contacts` + `GET /api/v1/conversations`
+- Start `/api/v1/sync` loop (cursor = null) and persist `next_cursor`
+
 ## UI integration checklist
-- Required endpoints: `/api/v1/health`, `/api/v1/identity`, `/api/v1/contacts`, `/api/v1/conversations`, `/api/v1/messages/send`, `/api/v1/sync`.
+- Required endpoints: `/api/v1/health`, `/api/v1/stats`, `/api/v1/identity`, `/api/v1/contacts`, `/api/v1/conversations`, `/api/v1/messages/send`, `/api/v1/sync`.
 - Auth: send `Authorization: Bearer <token>` when `ui-auth` is enabled; expect `401` with the standard error envelope when missing or invalid.
 - Retry/backoff: use exponential backoff for transient `5xx` responses; do not retry on `4xx` validation errors.
 - Idempotency: `contacts/add` and `conversations/create` can be safely retried; `messages/send` is not idempotent.

@@ -11,3 +11,10 @@ done
 grep -q "API.md" README.md
 grep -q "MIGRATIONS" README.md
 grep -q "COMPAT" README.md
+
+grep -q "^## Endpoints" API.md
+grep -q "^## DTO definitions" API.md
+grep -q "^### SendMessageResponse" API.md
+grep -q "^### SyncRequest" API.md
+grep -q "^## Stats payload" API.md
+grep -q "^### Planned attachment endpoints" API.md
