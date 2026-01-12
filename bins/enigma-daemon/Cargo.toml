@@ -1,6 +1,6 @@
 [package]
 name = "enigma-daemon"
-version = "0.0.4"
+version = "0.0.6"
 edition = "2021"
 authors = ["Sébastien TOUILLEUX (Gladius33)"]
 license = "MIT"
@@ -9,7 +9,8 @@ repository = "https://github.com/gladius33/enigma-messenger"
 homepage = "https://github.com/gladius33/enigma-messenger"
 
 [features]
-default = []
+default = ["proto-v2"]
+proto-v2 = ["enigma-core/proto-v2"]
 ui-auth = []
 webrtc = ["enigma-transport-webrtc"]
 webrtc-media = ["enigma-transport-webrtc"]
@@ -38,7 +39,7 @@ base64 = "0.22"
 async-trait = { workspace = true }
 enigma-node-types = { workspace = true }
 enigma-api = { path = "../../crates/enigma-api", version = "0.0.1" }
-enigma-ui-api = { path = "../../crates/enigma-ui-api", version = "0.0.1" }
+enigma-ui-api = { path = "../../crates/enigma-ui-api", version = "0.0.2" }
 uuid = { workspace = true }
 url = "2"
 hex = { workspace = true }

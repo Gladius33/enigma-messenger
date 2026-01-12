@@ -1,6 +1,7 @@
 use enigma_ui_api::{
-    ApiError, ApiMeta, ApiResponse, ConversationDto, ConversationKind, DeviceInfo, IdentityInfo,
-    MessageDto, MessageStatus, SendMessageRequest, SendMessageResponse,
+    ApiError, ApiMeta, ApiResponse, Capabilities, ConversationDto, ConversationKind, DeviceInfo,
+    IdentityInfo, MessageDto, MessageStatus, PolicyCaps, SendMessageRequest, SendMessageResponse,
+    StatsDto,
 };
 use serde_json::json;
 use uuid::Uuid;
@@ -161,6 +162,75 @@ fn message_serialization_stable() {
         "kind": "Text",
         "body_preview": "preview",
         "status": "Delivered"
+    });
+    assert_eq!(value, expected);
+}
+
+#[test]
+fn stats_serialization_stable() {
+    let stats = StatsDto {
+        user_id_hex: "user".to_string(),
+        device_id: "device".to_string(),
+        conversations: 1,
+        groups: 2,
+        channels: 3,
+        pending_outbox: 4,
+        directory_len: 5,
+        capabilities: Capabilities {
+            ui_api_v1: true,
+            ui_auth_enabled: false,
+            proto_v1: true,
+            proto_v2: true,
+            relay_enabled: false,
+            registry_enabled: false,
+            transport_webrtc_enabled: false,
+            sfu_enabled: false,
+            calls_enabled: false,
+            attachments_ui_api: false,
+            attachments_inline_enabled: true,
+            pagination_limit_cap: 200,
+            sync_limit_cap: 200,
+        },
+        policy_caps: Some(PolicyCaps {
+            max_text_bytes: 256,
+            max_inline_media_bytes: 512,
+            max_attachment_chunk_bytes: 1024,
+            max_attachment_parallel_chunks: 4,
+        }),
+    };
+    let encoded = serde_json::to_string(&stats).unwrap();
+    let decoded: StatsDto = serde_json::from_str(&encoded).unwrap();
+    assert_eq!(decoded, stats);
+    let value = serde_json::to_value(stats).unwrap();
+    let expected = json!({
+        "user_id_hex": "user",
+        "device_id": "device",
+        "conversations": 1,
+        "groups": 2,
+        "channels": 3,
+        "pending_outbox": 4,
+        "directory_len": 5,
+        "capabilities": {
+            "ui_api_v1": true,
+            "ui_auth_enabled": false,
+            "proto_v1": true,
+            "proto_v2": true,
+            "relay_enabled": false,
+            "registry_enabled": false,
+            "transport_webrtc_enabled": false,
+            "sfu_enabled": false,
+            "calls_enabled": false,
+            "attachments_ui_api": false,
+            "attachments_inline_enabled": true,
+            "pagination_limit_cap": 200,
+            "sync_limit_cap": 200
+        },
+        "policy_caps": {
+            "max_text_bytes": 256,
+            "max_inline_media_bytes": 512,
+            "max_attachment_chunk_bytes": 1024,
+            "max_attachment_parallel_chunks": 4
+        }
     });
     assert_eq!(value, expected);
 }

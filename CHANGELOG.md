@@ -2,6 +2,7 @@
 
 ## Unreleased
 - CI and release automation scaffolding (fmt, clippy, tests, release builds)
+- /stats now returns capabilities + policy caps for UI feature gating
 - Pinned Enigma crate versions and documented release governance (Step 12)
 - Reproducible release builds with checksums/signing hooks and supply-chain checks (Step 13)
 - Step 14: hardened registry/relay HTTP clients with retries and typed errors, structured daemon API errors, hermetic integration harnesses against enigma-node-registry 0.0.2 and enigma-relay 0.0.3, and production quickstart docs

@@ -18,7 +18,7 @@ The daemon exposes a local HTTP API under `/api/v1` for UI clients. Responses al
 - `GET /api/v1/conversations/{id}/messages?cursor=&limit=` → `[Message]`
 - `POST /api/v1/messages/send` body `SendMessageRequest` → `SendMessageResponse`
 - `POST /api/v1/sync` body `SyncRequest` → `SyncResponse` (events with optional `next_cursor`)
-- `GET /api/v1/stats` → minimal runtime stats (no secrets)
+- `GET /api/v1/stats` → `Stats` (minimal runtime stats + capabilities/policy caps)
 
 ## Pagination and sync semantics
 - `GET /api/v1/conversations/{id}/messages` returns messages in deterministic insertion order. `cursor` is a zero-based offset; `limit` defaults to 50 and is capped at 200. When `cursor` is past the end, an empty list is returned.
@@ -31,6 +31,34 @@ The daemon exposes a local HTTP API under `/api/v1` for UI clients. Responses al
 - `Message { id, conversation_id, sender, sent_ms, edited_ms?, kind, body_preview?, attachments_meta?, status: Pending|Sent|Delivered }`
 - `SendMessageRequest { conversation_id, kind, body? }`
 - `SyncResponse { events: [Event], next_cursor? }` where `Event` is currently `Message` or `ContactAdded`
+
+## Stats payload (/api/v1/stats)
+`GET /api/v1/stats` returns a stable, non-secret payload:
+- `Stats { user_id_hex, device_id, conversations, groups, channels, pending_outbox, directory_len, capabilities, policy_caps? }`
+
+### Capabilities
+- `ui_api_v1`: true
+- `ui_auth_enabled`: true when the daemon enforces `Authorization: Bearer` (feature `ui-auth` + token check active)
+- `proto_v1`: true
+- `proto_v2`: true when compiled with protocol V2 support
+- `relay_enabled`, `registry_enabled`, `transport_webrtc_enabled`, `sfu_enabled`, `calls_enabled`: reflect daemon config
+- `attachments_ui_api`: false (attachments endpoints not implemented yet)
+- `attachments_inline_enabled`: true when inline media is allowed (`max_inline_media_bytes > 0` and attachments are not disabled)
+- `pagination_limit_cap`: 200
+- `sync_limit_cap`: 200
+
+### policy_caps (optional)
+Small, non-secret limits from daemon policy:
+- `max_text_bytes`
+- `max_inline_media_bytes`
+- `max_attachment_chunk_bytes`
+- `max_attachment_parallel_chunks`
+
+### UI guidance
+- Use `capabilities.pagination_limit_cap` and `capabilities.sync_limit_cap` to cap page sizes for `/conversations/{id}/messages` and `/sync`.
+- Use `policy_caps` to enforce text limits, inline media size, and attachment chunk parallelism without parsing TOML.
+- Hide or disable attachment upload UI when `attachments_ui_api` is false.
+- Allow inline media only when `attachments_inline_enabled` is true and `max_inline_media_bytes` is respected.
 
 ## Attachments (planned; not yet implemented in the daemon UI API)
 This section defines the stable, additive contract for attachment upload/download. It aligns with the core chunking behavior and relay ack semantics, but the UI endpoints below are not yet exposed by the daemon. UI clients should feature-flag until the implementation lands.

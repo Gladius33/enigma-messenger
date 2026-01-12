@@ -12,6 +12,7 @@ use config::EnigmaConfig;
 use enigma_core::config::{CoreConfig, TransportMode};
 use enigma_core::directory::InMemoryRegistry;
 use enigma_core::messaging::MockTransport;
+use enigma_core::policy::Policy;
 use enigma_core::relay::InMemoryRelay;
 use enigma_core::Core;
 use enigma_sfu::{
@@ -20,9 +21,9 @@ use enigma_sfu::{
 use enigma_storage::key_provider::{KeyProvider, MasterKey};
 use enigma_storage::EnigmaStorageError;
 use enigma_ui_api::{
-    ApiError, ApiMeta, ApiResponse, ContactDto, ConversationDto, ConversationKind, DeviceInfo,
-    Event, IdentityInfo, MessageDto, MessageStatus, SendMessageRequest, SendMessageResponse,
-    SyncRequest, SyncResponse, API_VERSION,
+    ApiError, ApiMeta, ApiResponse, Capabilities, ContactDto, ConversationDto, ConversationKind,
+    DeviceInfo, Event, IdentityInfo, MessageDto, MessageStatus, PolicyCaps, SendMessageRequest,
+    SendMessageResponse, StatsDto, SyncRequest, SyncResponse, API_VERSION,
 };
 use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
@@ -92,6 +93,13 @@ struct DaemonState {
     call_manager: CallManager,
     calls_enabled: bool,
     calls_policy: CallsPolicy,
+    policy: Policy,
+    allow_attachments: bool,
+    registry_enabled: bool,
+    relay_enabled: bool,
+    transport_webrtc_enabled: bool,
+    sfu_enabled: bool,
+    ui_auth_enabled: bool,
     ui_messages: Arc<Mutex<HashMap<String, Vec<MessageDto>>>>,
     ui_events: Arc<Mutex<UiEvents>>,
     ui_conversations: Arc<Mutex<HashMap<String, UiConversationEntry>>>,
@@ -139,6 +147,7 @@ async fn main() -> Result<(), DaemonError> {
         max_publish_tracks_per_participant: cfg.calls.max_publish_tracks_per_participant,
         max_subscriptions_per_participant: cfg.calls.max_subscriptions_per_participant,
     };
+    let auth_enabled = ui_auth_enabled();
     let state = DaemonState {
         core,
         sfu,
@@ -146,6 +155,13 @@ async fn main() -> Result<(), DaemonError> {
         call_manager,
         calls_enabled,
         calls_policy,
+        policy: cfg.policy.clone(),
+        allow_attachments: true,
+        registry_enabled: cfg.registry.enabled,
+        relay_enabled: cfg.relay.enabled,
+        transport_webrtc_enabled: cfg.transport.webrtc.enabled,
+        sfu_enabled: cfg.sfu.enabled,
+        ui_auth_enabled: auth_enabled,
         ui_messages: Arc::new(Mutex::new(HashMap::new())),
         ui_events: Arc::new(Mutex::new(UiEvents::new())),
         ui_conversations: Arc::new(Mutex::new(HashMap::new())),
@@ -172,6 +188,16 @@ fn init_logging(cfg: &EnigmaConfig) {
     let _ = env_logger::Builder::from_default_env()
         .filter_level(level)
         .try_init();
+}
+
+fn ui_auth_enabled() -> bool {
+    if !cfg!(feature = "ui-auth") {
+        return false;
+    }
+    std::env::var("ENIGMA_UI_TOKEN")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .is_some()
 }
 
 async fn init_core(cfg: &EnigmaConfig) -> Result<Arc<Core>, DaemonError> {
@@ -1103,16 +1129,40 @@ async fn handle_ui_request(
     }
     if path == "/api/v1/stats" && req.method() == hyper::Method::GET {
         let stats = state.core.stats().await;
-        let body = serde_json::json!({
-            "user_id_hex": stats.user_id_hex,
-            "device_id": stats.device_id.to_string(),
-            "conversations": stats.conversations,
-            "groups": stats.groups,
-            "channels": stats.channels,
-            "pending_outbox": stats.pending_outbox,
-            "directory_len": stats.directory_len
-        });
-        return Ok(ui_ok(body));
+        let capabilities = Capabilities {
+            ui_api_v1: true,
+            ui_auth_enabled: state.ui_auth_enabled,
+            proto_v1: true,
+            proto_v2: cfg!(feature = "proto-v2"),
+            relay_enabled: state.relay_enabled,
+            registry_enabled: state.registry_enabled,
+            transport_webrtc_enabled: state.transport_webrtc_enabled,
+            sfu_enabled: state.sfu_enabled,
+            calls_enabled: state.calls_enabled,
+            attachments_ui_api: false,
+            attachments_inline_enabled: state.allow_attachments
+                && state.policy.max_inline_media_bytes > 0,
+            pagination_limit_cap: 200,
+            sync_limit_cap: 200,
+        };
+        let policy_caps = PolicyCaps {
+            max_text_bytes: state.policy.max_text_bytes as u64,
+            max_inline_media_bytes: state.policy.max_inline_media_bytes as u64,
+            max_attachment_chunk_bytes: state.policy.max_attachment_chunk_bytes as u64,
+            max_attachment_parallel_chunks: state.policy.max_attachment_parallel_chunks as u64,
+        };
+        let dto = StatsDto {
+            user_id_hex: stats.user_id_hex,
+            device_id: stats.device_id.to_string(),
+            conversations: stats.conversations as u64,
+            groups: stats.groups as u64,
+            channels: stats.channels as u64,
+            pending_outbox: stats.pending_outbox as u64,
+            directory_len: stats.directory_len as u64,
+            capabilities,
+            policy_caps: Some(policy_caps),
+        };
+        return Ok(ui_ok(dto));
     }
     Ok(ui_error(
         StatusCode::NOT_FOUND,

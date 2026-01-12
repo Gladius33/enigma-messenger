@@ -1,7 +1,7 @@
 use super::*;
 use enigma_ui_api::{
     ApiResponse, ContactDto, ConversationDto, IdentityInfo, MessageDto, SendMessageResponse,
-    SyncResponse,
+    StatsDto, SyncResponse,
 };
 use http_body_util::BodyExt;
 use serde::de::DeserializeOwned;
@@ -178,7 +178,7 @@ async fn ui_api_endpoints_return_dtos() {
     .await;
     assert!(sync.data.unwrap().next_cursor.is_some());
 
-    let stats = decode_response::<Value>(
+    let stats = decode_response::<StatsDto>(
         dispatch_request(
             state.clone(),
             addr,
@@ -187,7 +187,45 @@ async fn ui_api_endpoints_return_dtos() {
         .await,
     )
     .await;
-    assert!(stats.data.unwrap().get("user_id_hex").is_some());
+    let stats = stats.data.unwrap();
+    assert!(!stats.user_id_hex.is_empty());
+    assert!(stats.capabilities.ui_api_v1);
+    assert!(!stats.capabilities.attachments_ui_api);
+    assert_eq!(stats.capabilities.pagination_limit_cap, 200);
+    assert_eq!(stats.capabilities.sync_limit_cap, 200);
+    assert_eq!(stats.capabilities.relay_enabled, cfg.relay.enabled);
+    assert_eq!(stats.capabilities.registry_enabled, cfg.registry.enabled);
+    assert_eq!(
+        stats.capabilities.transport_webrtc_enabled,
+        cfg.transport.webrtc.enabled
+    );
+    assert_eq!(stats.capabilities.sfu_enabled, cfg.sfu.enabled);
+    assert_eq!(stats.capabilities.calls_enabled, cfg.calls.enabled);
+    assert!(stats.capabilities.proto_v1);
+    assert_eq!(stats.capabilities.proto_v2, cfg!(feature = "proto-v2"));
+    assert_eq!(
+        stats.capabilities.ui_auth_enabled,
+        cfg!(feature = "ui-auth")
+            && std::env::var("ENIGMA_UI_TOKEN")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .is_some()
+    );
+    assert!(stats.capabilities.attachments_inline_enabled);
+    let policy_caps = stats.policy_caps.unwrap();
+    assert_eq!(policy_caps.max_text_bytes, cfg.policy.max_text_bytes as u64);
+    assert_eq!(
+        policy_caps.max_inline_media_bytes,
+        cfg.policy.max_inline_media_bytes as u64
+    );
+    assert_eq!(
+        policy_caps.max_attachment_chunk_bytes,
+        cfg.policy.max_attachment_chunk_bytes as u64
+    );
+    assert_eq!(
+        policy_caps.max_attachment_parallel_chunks,
+        cfg.policy.max_attachment_parallel_chunks as u64
+    );
 
     let _ = tx.send(());
     let _ = tokio::time::timeout(std::time::Duration::from_secs(2), handle).await;

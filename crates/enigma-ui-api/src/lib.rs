@@ -128,3 +128,42 @@ pub enum Event {
     Message(MessageDto),
     ContactAdded(ContactDto),
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct Capabilities {
+    pub ui_api_v1: bool,
+    pub ui_auth_enabled: bool,
+    pub proto_v1: bool,
+    pub proto_v2: bool,
+    pub relay_enabled: bool,
+    pub registry_enabled: bool,
+    pub transport_webrtc_enabled: bool,
+    pub sfu_enabled: bool,
+    pub calls_enabled: bool,
+    pub attachments_ui_api: bool,
+    pub attachments_inline_enabled: bool,
+    pub pagination_limit_cap: u32,
+    pub sync_limit_cap: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct PolicyCaps {
+    pub max_text_bytes: u64,
+    pub max_inline_media_bytes: u64,
+    pub max_attachment_chunk_bytes: u64,
+    pub max_attachment_parallel_chunks: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct StatsDto {
+    pub user_id_hex: String,
+    pub device_id: String,
+    pub conversations: u64,
+    pub groups: u64,
+    pub channels: u64,
+    pub pending_outbox: u64,
+    pub directory_len: u64,
+    pub capabilities: Capabilities,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy_caps: Option<PolicyCaps>,
+}

@@ -1,6 +1,6 @@
 [package]
 name = "enigma-ui-api"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2021"
 authors = ["Sébastien TOUILLEUX (Gladius33)"]
 license = "MIT"
@@ -12,4 +12,3 @@ homepage = "https://github.com/gladius33/enigma-messenger"
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 uuid = { workspace = true }
-
