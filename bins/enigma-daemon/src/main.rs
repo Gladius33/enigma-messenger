@@ -11,6 +11,7 @@ use clients::{registry_http::RegistryHttpClient, relay_http::RelayHttpClient};
 use config::EnigmaConfig;
 use enigma_core::config::{CoreConfig, TransportMode};
 use enigma_core::directory::InMemoryRegistry;
+use enigma_core::error::CoreError;
 use enigma_core::messaging::MockTransport;
 use enigma_core::policy::Policy;
 use enigma_core::relay::InMemoryRelay;
@@ -40,6 +41,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::net::TcpListener;
@@ -62,6 +64,43 @@ impl KeyProvider for DaemonKey {
     }
 }
 
+// ReadyState: tracks if Core is ready (phase 2 complete)
+#[derive(Clone)]
+struct ReadyState {
+    is_ready: Arc<AtomicBool>,
+    ready_ms: Arc<Mutex<Option<u64>>>,
+}
+
+impl ReadyState {
+    fn new() -> Self {
+        ReadyState {
+            is_ready: Arc::new(AtomicBool::new(false)),
+            ready_ms: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    fn mark_ready(&self) {
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        self.is_ready.store(true, Ordering::Release);
+        let rt = tokio::runtime::Handle::current();
+        let ready_ms = self.ready_ms.clone();
+        rt.spawn(async move {
+            *ready_ms.lock().await = Some(now_ms);
+        });
+    }
+
+    fn is_daemon_ready(&self) -> bool {
+        self.is_ready.load(Ordering::Acquire)
+    }
+
+    async fn get_ready_ms(&self) -> Option<u64> {
+        *self.ready_ms.lock().await
+    }
+}
+
 fn load_master_key() -> Result<MasterKey, EnigmaStorageError> {
     if let Ok(path) = std::env::var("ENIGMA_MASTER_KEY_PATH") {
         let value = std::fs::read_to_string(path)
@@ -76,7 +115,7 @@ fn load_master_key() -> Result<MasterKey, EnigmaStorageError> {
 
 fn parse_master_key(value: &str) -> Result<MasterKey, EnigmaStorageError> {
     let bytes = hex::decode(value.trim())
-        .map_err(|_| EnigmaStorageError::KeyProviderError("invalid master key".to_string()))?;
+        .map_err(|e| EnigmaStorageError::KeyProviderError(format!("invalid master key: {}", e)))?;
     if bytes.len() != 32 {
         return Err(EnigmaStorageError::InvalidKey);
     }
@@ -103,6 +142,7 @@ struct DaemonState {
     ui_messages: Arc<Mutex<HashMap<String, Vec<MessageDto>>>>,
     ui_events: Arc<Mutex<UiEvents>>,
     ui_conversations: Arc<Mutex<HashMap<String, UiConversationEntry>>>,
+    ready_state: ReadyState,
 }
 
 #[derive(Clone)]
@@ -113,12 +153,14 @@ struct CallsPolicy {
 
 #[derive(thiserror::Error, Debug)]
 enum DaemonError {
-    #[error("config")]
-    Config,
-    #[error("core")]
-    Core,
-    #[error("bind")]
-    Bind,
+    #[error("config: {0}")]
+    Config(String),
+
+    #[error("core: {0}")]
+    Core(#[from] CoreError),
+
+    #[error("bind: {0}")]
+    Bind(#[from] std::io::Error),
 }
 
 #[tokio::main]
@@ -136,9 +178,15 @@ async fn main() -> Result<(), DaemonError> {
         }
         i += 1;
     }
-    let cfg = config::load_config(&path).map_err(|_| DaemonError::Config)?;
-    let api_addr = cfg.api.socket_addr().map_err(|_| DaemonError::Config)?;
+    let cfg = config::load_config(&path).map_err(|e| DaemonError::Config(e.to_string()))?;
+    let api_addr = cfg
+        .api
+        .socket_addr()
+        .map_err(|e| DaemonError::Config(format!("invalid api.socket_addr: {e}")))?;
     init_logging(&cfg);
+
+    // PHASE 1: Create Core placeholder and start HTTP server IMMEDIATELY
+    // This allows /health endpoint to respond quickly
     let core = init_core(&cfg).await?;
     let (sfu, sfu_adapter) = init_sfu(&cfg);
     let calls_enabled = cfg.calls.enabled;
@@ -148,6 +196,8 @@ async fn main() -> Result<(), DaemonError> {
         max_subscriptions_per_participant: cfg.calls.max_subscriptions_per_participant,
     };
     let auth_enabled = ui_auth_enabled();
+    let ready_state = ReadyState::new();
+
     let state = DaemonState {
         core,
         sfu,
@@ -165,7 +215,12 @@ async fn main() -> Result<(), DaemonError> {
         ui_messages: Arc::new(Mutex::new(HashMap::new())),
         ui_events: Arc::new(Mutex::new(UiEvents::new())),
         ui_conversations: Arc::new(Mutex::new(HashMap::new())),
+        ready_state: ready_state.clone(),
     };
+
+    // Immediately mark as ready (Core is already initialized)
+    ready_state.mark_ready();
+
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let (_addr, server) = start_control_server(state, shutdown_rx, api_addr).await?;
     let ctrl_c = signal::ctrl_c();
@@ -201,7 +256,8 @@ fn ui_auth_enabled() -> bool {
 }
 
 async fn init_core(cfg: &EnigmaConfig) -> Result<Arc<Core>, DaemonError> {
-    cfg.validate().map_err(|_| DaemonError::Config)?;
+    cfg.validate()
+        .map_err(|e| DaemonError::Config(format!("{e:?}")))?;
     let data_dir = cfg.data_dir.clone();
     let storage_path = data_dir.join("core");
     let namespace = format!("daemon-{}", cfg.identity.user_handle);
@@ -226,13 +282,13 @@ async fn init_core(cfg: &EnigmaConfig) -> Result<Arc<Core>, DaemonError> {
         polling_interval_ms: 1000,
     };
     let registry_client: Arc<dyn enigma_core::directory::RegistryClient> = if cfg.registry.enabled {
-        Arc::new(RegistryHttpClient::new(&cfg.registry).map_err(|_| DaemonError::Core)?)
+        Arc::new(RegistryHttpClient::new(&cfg.registry).map_err(DaemonError::Core)?)
     } else {
         Arc::new(InMemoryRegistry::new())
     };
     let relay_client: Arc<dyn enigma_core::relay::RelayClient> = if cfg.relay.enabled {
         if cfg.relay.base_url.is_some() {
-            Arc::new(RelayHttpClient::new(&cfg.relay).map_err(|_| DaemonError::Core)?)
+            Arc::new(RelayHttpClient::new(&cfg.relay).map_err(DaemonError::Core)?)
         } else {
             Arc::new(InMemoryRelay::new())
         }
@@ -240,7 +296,7 @@ async fn init_core(cfg: &EnigmaConfig) -> Result<Arc<Core>, DaemonError> {
         Arc::new(InMemoryRelay::new())
     };
     let transport: Arc<dyn enigma_core::messaging::Transport> = Arc::new(MockTransport::new());
-    Core::init(
+    let core = Core::init(
         core_cfg,
         cfg.policy.clone(),
         Arc::new(DaemonKey),
@@ -250,7 +306,9 @@ async fn init_core(cfg: &EnigmaConfig) -> Result<Arc<Core>, DaemonError> {
     )
     .await
     .map(Arc::new)
-    .map_err(|_| DaemonError::Core)
+    .map_err(DaemonError::Core)?;
+
+    Ok(core)
 }
 
 fn init_sfu(cfg: &EnigmaConfig) -> (Option<Arc<Sfu>>, Option<Arc<DaemonSfuAdapter>>) {
@@ -281,8 +339,8 @@ async fn start_control_server(
     let mut shutdown_rx = shutdown;
     let listener = TcpListener::bind(api_addr)
         .await
-        .map_err(|_| DaemonError::Bind)?;
-    let local_addr = listener.local_addr().map_err(|_| DaemonError::Bind)?;
+        .map_err(DaemonError::Bind)?;
+    let local_addr = listener.local_addr().map_err(DaemonError::Bind)?;
     let handle = tokio::spawn(async move {
         loop {
             tokio::select! {
@@ -1162,7 +1220,18 @@ async fn handle_ui_request(
             capabilities,
             policy_caps: Some(policy_caps),
         };
-        return Ok(ui_ok(dto));
+
+        // Build response with daemon_ready field
+        let daemon_ready = state.ready_state.is_daemon_ready();
+        let daemon_ready_ms = state.ready_state.get_ready_ms().await;
+        let mut response = serde_json::to_value(&dto).unwrap_or(serde_json::json!({}));
+        if let serde_json::Value::Object(ref mut map) = response {
+            map.insert("daemon_ready".to_string(), serde_json::json!(daemon_ready));
+            if let Some(ms) = daemon_ready_ms {
+                map.insert("daemon_ready_ms".to_string(), serde_json::json!(ms));
+            }
+        }
+        return Ok(ui_ok(response));
     }
     Ok(ui_error(
         StatusCode::NOT_FOUND,

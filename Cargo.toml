@@ -4,13 +4,14 @@ members = [
     "crates/enigma-api",
     "crates/enigma-ui-api",
     "bins/enigma-cli",
-    "bins/enigma-daemon"
+    "bins/enigma-daemon",
+    "fuzz"
 ]
 resolver = "2"
 
 [workspace.package]
 authors = ["Sébastien TOUILLEUX (Gladius33)"]
-version = "0.0.6"
+version = "0.0.8"
 license = "MIT"
 repository = "https://github.com/gladius33/enigma-messenger"
 homepage = "https://github.com/gladius33/enigma-messenger"

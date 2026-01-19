@@ -452,6 +452,8 @@ pub(super) async fn build_state(cfg: &EnigmaConfig) -> DaemonState {
     init_logging(cfg);
     let core = init_core(cfg).await.unwrap();
     let (sfu, sfu_adapter) = init_sfu(cfg);
+    let ready_state = ReadyState::new();
+    ready_state.mark_ready(); // Mark immediately for tests
     DaemonState {
         core,
         sfu,
@@ -472,6 +474,7 @@ pub(super) async fn build_state(cfg: &EnigmaConfig) -> DaemonState {
         ui_messages: Arc::new(Mutex::new(HashMap::new())),
         ui_events: Arc::new(Mutex::new(UiEvents::new())),
         ui_conversations: Arc::new(Mutex::new(HashMap::new())),
+        ready_state,
     }
 }
 
@@ -482,7 +485,7 @@ pub(super) async fn start_server(
     let (tx, rx) = oneshot::channel();
     let (addr, handle) = match start_control_server(state, rx, api_addr).await {
         Ok(output) => output,
-        Err(DaemonError::Bind) => {
+        Err(DaemonError::Bind(_)) => {
             let handle = tokio::spawn(async move {});
             return (None, tx, handle);
         }

@@ -74,8 +74,10 @@ Primitive conventions:
   - Contact event: `{ type: "ContactAdded", ...Contact }`
 
 ## Stats payload (/api/v1/stats)
-`GET /api/v1/stats` returns a stable, non-secret payload:
-- `Stats { user_id_hex: string (user_id), device_id: string (UUID), conversations: u64, groups: u64, channels: u64, pending_outbox: u64, directory_len: u64, capabilities: Capabilities, policy_caps?: PolicyCaps }`
+`GET /api/v1/stats` returns a stable, non-secret payload with fast boot support:
+- `Stats { user_id_hex: string (user_id), device_id: string (UUID), conversations: u64, groups: u64, channels: u64, pending_outbox: u64, directory_len: u64, daemon_ready: bool, daemon_ready_ms?: u64, capabilities: Capabilities, policy_caps?: PolicyCaps }`
+- `daemon_ready`: boolean indicating if the daemon core initialization is complete. UI clients should poll until this is true before making full requests.
+- `daemon_ready_ms`: optional timestamp (ms since Unix epoch) indicating when the daemon became ready. Present only if daemon_ready is true.
 
 ### Capabilities
 - `Capabilities { ui_api_v1: bool, ui_auth_enabled: bool, proto_v1: bool, proto_v2: bool, relay_enabled: bool, registry_enabled: bool, transport_webrtc_enabled: bool, sfu_enabled: bool, calls_enabled: bool, attachments_ui_api: bool, attachments_inline_enabled: bool, pagination_limit_cap: u32, sync_limit_cap: u32 }`
