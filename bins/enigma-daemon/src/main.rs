@@ -43,7 +43,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH, Instant};
 use tokio::net::TcpListener;
 use tokio::signal;
 use tokio::sync::oneshot;
@@ -62,6 +62,38 @@ impl KeyProvider for DaemonKey {
     fn get_master_key(&self) -> Result<MasterKey, EnigmaStorageError> {
         load_master_key()
     }
+}
+
+// Boot metrics: only populated when debug is enabled
+#[derive(Clone, Debug, serde::Serialize)]
+struct BootMetrics {
+    config_parse_ms: u64,
+    logger_init_ms: u64,
+    core_init_ms: u64,
+    server_bind_ms: u64,
+    total_ms: u64,
+}
+
+// Check if debug mode is enabled
+fn is_debug_enabled(cfg: &EnigmaConfig) -> bool {
+    // Check ENIGMA_BOOT_METRICS env var
+    if std::env::var("ENIGMA_BOOT_METRICS")
+        .ok()
+        .filter(|v| v == "1")
+        .is_some()
+    {
+        return true;
+    }
+
+    // Check RUST_LOG env var
+    if let Ok(rust_log) = std::env::var("RUST_LOG") {
+        if rust_log.contains("debug") || rust_log.contains("trace") {
+            return true;
+        }
+    }
+
+    // Check config logging level
+    matches!(cfg.logging.level.to_lowercase().as_str(), "debug" | "trace")
 }
 
 // ReadyState: tracks if Core is ready (phase 2 complete)
@@ -143,6 +175,7 @@ struct DaemonState {
     ui_events: Arc<Mutex<UiEvents>>,
     ui_conversations: Arc<Mutex<HashMap<String, UiConversationEntry>>>,
     ready_state: ReadyState,
+    boot_metrics: Option<BootMetrics>,
 }
 
 #[derive(Clone)]
@@ -165,6 +198,7 @@ enum DaemonError {
 
 #[tokio::main]
 async fn main() -> Result<(), DaemonError> {
+    let boot_start = Instant::now();
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|arg| arg == "--version" || arg == "-V") {
         println!("{}", env!("CARGO_PKG_VERSION"));
@@ -178,16 +212,26 @@ async fn main() -> Result<(), DaemonError> {
         }
         i += 1;
     }
+    
+    let config_start = Instant::now();
     let cfg = config::load_config(&path).map_err(|e| DaemonError::Config(e.to_string()))?;
+    let config_parse_ms = config_start.elapsed().as_millis() as u64;
+    
     let api_addr = cfg
         .api
         .socket_addr()
         .map_err(|e| DaemonError::Config(format!("invalid api.socket_addr: {e}")))?;
+    
+    let logger_start = Instant::now();
     init_logging(&cfg);
+    let logger_init_ms = logger_start.elapsed().as_millis() as u64;
 
-    // PHASE 1: Create Core placeholder and start HTTP server IMMEDIATELY
+    // PHASE 1: Create Core and start HTTP server IMMEDIATELY
     // This allows /health endpoint to respond quickly
+    let core_start = Instant::now();
     let core = init_core(&cfg).await?;
+    let core_init_ms = core_start.elapsed().as_millis() as u64;
+    
     let (sfu, sfu_adapter) = init_sfu(&cfg);
     let calls_enabled = cfg.calls.enabled;
     let call_manager = CallManager::new();
@@ -198,6 +242,21 @@ async fn main() -> Result<(), DaemonError> {
     let auth_enabled = ui_auth_enabled();
     let ready_state = ReadyState::new();
 
+    // Calculate boot metrics if debug is enabled
+    let debug_enabled = is_debug_enabled(&cfg);
+    let boot_metrics = if debug_enabled {
+        let total_ms = boot_start.elapsed().as_millis() as u64;
+        Some(BootMetrics {
+            config_parse_ms,
+            logger_init_ms,
+            core_init_ms,
+            server_bind_ms: 0, // Will be set after bind
+            total_ms,
+        })
+    } else {
+        None
+    };
+    
     let state = DaemonState {
         core,
         sfu,
@@ -216,6 +275,7 @@ async fn main() -> Result<(), DaemonError> {
         ui_events: Arc::new(Mutex::new(UiEvents::new())),
         ui_conversations: Arc::new(Mutex::new(HashMap::new())),
         ready_state: ready_state.clone(),
+        boot_metrics: boot_metrics.clone(),
     };
 
     // Immediately mark as ready (Core is already initialized)
@@ -1229,6 +1289,11 @@ async fn handle_ui_request(
             map.insert("daemon_ready".to_string(), serde_json::json!(daemon_ready));
             if let Some(ms) = daemon_ready_ms {
                 map.insert("daemon_ready_ms".to_string(), serde_json::json!(ms));
+            }
+            
+            // Include debug_boot only if debug is enabled
+            if let Some(metrics) = &state.boot_metrics {
+                map.insert("debug_boot".to_string(), serde_json::json!(metrics));
             }
         }
         return Ok(ui_ok(response));

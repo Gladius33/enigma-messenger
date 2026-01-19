@@ -475,6 +475,7 @@ pub(super) async fn build_state(cfg: &EnigmaConfig) -> DaemonState {
         ui_events: Arc::new(Mutex::new(UiEvents::new())),
         ui_conversations: Arc::new(Mutex::new(HashMap::new())),
         ready_state,
+        boot_metrics: None, // No boot metrics in tests
     }
 }
 
