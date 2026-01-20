@@ -110,6 +110,19 @@ async fn daemon_starts_and_stops() {
     let _ = tokio::time::timeout(Duration::from_secs(2), handle).await;
 }
 
+#[test]
+fn storage_error_includes_paths() {
+    let err = core_error(
+        CoreError::Storage,
+        "storage init failed: data_dir=/tmp/enigma storage_path=/tmp/enigma/core cause=permission",
+    );
+    let display = err.to_string();
+    assert!(
+        display.contains("data_dir") && display.contains("storage_path"),
+        "expected storage context in error, got: {display}"
+    );
+}
+
 #[tokio::test]
 async fn sfu_control_endpoints() {
     let dir = tempdir().unwrap();

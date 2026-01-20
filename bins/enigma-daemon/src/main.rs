@@ -20,7 +20,7 @@ use enigma_sfu::{
     ParticipantId, ParticipantMeta, RoomId, Sfu, SfuError, TrackId, TrackKind, VecEventSink,
 };
 use enigma_storage::key_provider::{KeyProvider, MasterKey};
-use enigma_storage::EnigmaStorageError;
+use enigma_storage::{EncryptedStore, EnigmaStorageError};
 use enigma_ui_api::{
     ApiError, ApiMeta, ApiResponse, Capabilities, ContactDto, ConversationDto, ConversationKind,
     DeviceInfo, Event, IdentityInfo, MessageDto, MessageStatus, PolicyCaps, SendMessageRequest,
@@ -38,6 +38,7 @@ use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use sfu_adapter::DaemonSfuAdapter;
 use std::collections::HashMap;
+use std::error::Error as StdError;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -49,6 +50,7 @@ use tokio::signal;
 use tokio::sync::oneshot;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
+use tokio::time::{sleep, Duration};
 use url::form_urlencoded;
 
 #[derive(Clone)]
@@ -186,18 +188,59 @@ struct CallsPolicy {
 
 #[derive(thiserror::Error, Debug)]
 enum DaemonError {
-    #[error("config: {0}")]
-    Config(String),
+    #[error("config: {context}")]
+    Config {
+        #[source]
+        source: config::ConfigError,
+        context: String,
+    },
 
-    #[error("core: {0}")]
-    Core(#[from] CoreError),
+    #[error("core: {context}")]
+    Core {
+        #[source]
+        source: CoreError,
+        context: String,
+    },
 
     #[error("bind: {0}")]
     Bind(#[from] std::io::Error),
 }
 
+fn config_error(source: config::ConfigError, context: impl Into<String>) -> DaemonError {
+    DaemonError::Config {
+        source,
+        context: context.into(),
+    }
+}
+
+fn core_error(source: CoreError, context: impl Into<String>) -> DaemonError {
+    DaemonError::Core {
+        source,
+        context: context.into(),
+    }
+}
+
 #[tokio::main]
-async fn main() -> Result<(), DaemonError> {
+async fn main() {
+    if let Err(err) = try_main().await {
+        eprintln!("Error: {err}");
+        let mut source = err.source();
+        while let Some(cause) = source {
+            eprintln!("Caused by: {cause}");
+            source = cause.source();
+        }
+        if std::env::var("RUST_BACKTRACE")
+            .ok()
+            .map(|v| v == "1" || v == "full")
+            .unwrap_or(false)
+        {
+            eprintln!("{err:#?}");
+        }
+        std::process::exit(1);
+    }
+}
+
+async fn try_main() -> Result<(), DaemonError> {
     let boot_start = Instant::now();
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|arg| arg == "--version" || arg == "-V") {
@@ -214,13 +257,14 @@ async fn main() -> Result<(), DaemonError> {
     }
 
     let config_start = Instant::now();
-    let cfg = config::load_config(&path).map_err(|e| DaemonError::Config(e.to_string()))?;
+    let cfg = config::load_config(&path)
+        .map_err(|e| config_error(e, format!("load config at {}", path.display())))?;
     let config_parse_ms = config_start.elapsed().as_millis() as u64;
 
     let api_addr = cfg
         .api
         .socket_addr()
-        .map_err(|e| DaemonError::Config(format!("invalid api.socket_addr: {e}")))?;
+        .map_err(|e| config_error(e, "invalid api.socket_addr"))?;
 
     let logger_start = Instant::now();
     init_logging(&cfg);
@@ -317,14 +361,25 @@ fn ui_auth_enabled() -> bool {
 
 async fn init_core(cfg: &EnigmaConfig) -> Result<Arc<Core>, DaemonError> {
     cfg.validate()
-        .map_err(|e| DaemonError::Config(format!("{e:?}")))?;
+        .map_err(|e| config_error(e, "validate config"))?;
     let data_dir = cfg.data_dir.clone();
     let storage_path = data_dir.join("core");
+    std::fs::create_dir_all(&storage_path).map_err(|e| {
+        core_error(
+            CoreError::Storage,
+            format!(
+                "storage init failed: data_dir={} storage_path={} cause={}",
+                data_dir.display(),
+                storage_path.display(),
+                e
+            ),
+        )
+    })?;
     let namespace = format!("daemon-{}", cfg.identity.user_handle);
     let _ = cfg.transport.webrtc.stun_servers.len();
     let core_cfg = CoreConfig {
         storage_path: storage_path.to_str().unwrap_or(".enigma").to_string(),
-        namespace,
+        namespace: namespace.clone(),
         user_handle: cfg.identity.user_handle.clone(),
         node_base_urls: Vec::new(),
         relay_base_urls: cfg.relay.base_url.clone().into_iter().collect::<Vec<_>>(),
@@ -342,13 +397,18 @@ async fn init_core(cfg: &EnigmaConfig) -> Result<Arc<Core>, DaemonError> {
         polling_interval_ms: 1000,
     };
     let registry_client: Arc<dyn enigma_core::directory::RegistryClient> = if cfg.registry.enabled {
-        Arc::new(RegistryHttpClient::new(&cfg.registry).map_err(DaemonError::Core)?)
+        Arc::new(
+            RegistryHttpClient::new(&cfg.registry)
+                .map_err(|e| core_error(e, "init registry client"))?,
+        )
     } else {
         Arc::new(InMemoryRegistry::new())
     };
     let relay_client: Arc<dyn enigma_core::relay::RelayClient> = if cfg.relay.enabled {
         if cfg.relay.base_url.is_some() {
-            Arc::new(RelayHttpClient::new(&cfg.relay).map_err(DaemonError::Core)?)
+            Arc::new(
+                RelayHttpClient::new(&cfg.relay).map_err(|e| core_error(e, "init relay client"))?,
+            )
         } else {
             Arc::new(InMemoryRelay::new())
         }
@@ -356,19 +416,79 @@ async fn init_core(cfg: &EnigmaConfig) -> Result<Arc<Core>, DaemonError> {
         Arc::new(InMemoryRelay::new())
     };
     let transport: Arc<dyn enigma_core::messaging::Transport> = Arc::new(MockTransport::new());
-    let core = Core::init(
-        core_cfg,
-        cfg.policy.clone(),
-        Arc::new(DaemonKey),
-        registry_client,
-        relay_client,
-        transport,
-    )
-    .await
-    .map(Arc::new)
-    .map_err(DaemonError::Core)?;
 
-    Ok(core)
+    let backoffs_ms: [u64; 6] = [0, 50, 100, 200, 400, 500];
+    let mut last_storage_err: Option<String> = None;
+    for (idx, delay) in backoffs_ms.iter().enumerate() {
+        if *delay > 0 {
+            sleep(Duration::from_millis(*delay)).await;
+        }
+
+        match EncryptedStore::open(&core_cfg.storage_path, &namespace, &DaemonKey) {
+            Ok(store) => {
+                if let Err(err) = store.flush() {
+                    last_storage_err = Some(err.to_string());
+                }
+            }
+            Err(err) => {
+                let message = format!(
+                    "storage preflight failed (attempt {}): data_dir={} storage_path={} cause={}",
+                    idx + 1,
+                    data_dir.display(),
+                    storage_path.display(),
+                    err
+                );
+                log::debug!("{}", message);
+                last_storage_err = Some(err.to_string());
+                continue;
+            }
+        }
+
+        match Core::init(
+            core_cfg.clone(),
+            cfg.policy.clone(),
+            Arc::new(DaemonKey),
+            registry_client.clone(),
+            relay_client.clone(),
+            transport.clone(),
+        )
+        .await
+        .map(Arc::new)
+        {
+            Ok(core) => return Ok(core),
+            Err(CoreError::Storage) => {
+                let context = format!(
+                    "storage init failed (attempt {}): data_dir={} storage_path={} last_error={}",
+                    idx + 1,
+                    data_dir.display(),
+                    storage_path.display(),
+                    last_storage_err.as_deref().unwrap_or("unknown"),
+                );
+                log::warn!("{}", context);
+                if idx + 1 == backoffs_ms.len() {
+                    return Err(core_error(CoreError::Storage, context));
+                }
+            }
+            Err(other) => {
+                let context = format!(
+                    "core init failed: data_dir={} storage_path={}",
+                    data_dir.display(),
+                    storage_path.display(),
+                );
+                return Err(core_error(other, context));
+            }
+        }
+    }
+
+    Err(core_error(
+        CoreError::Storage,
+        format!(
+            "storage init failed after retries: data_dir={} storage_path={} last_error={}",
+            data_dir.display(),
+            storage_path.display(),
+            last_storage_err.as_deref().unwrap_or("unknown"),
+        ),
+    ))
 }
 
 fn init_sfu(cfg: &EnigmaConfig) -> (Option<Arc<Sfu>>, Option<Arc<DaemonSfuAdapter>>) {
