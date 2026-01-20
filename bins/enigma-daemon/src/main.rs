@@ -43,7 +43,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH, Instant};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::net::TcpListener;
 use tokio::signal;
 use tokio::sync::oneshot;
@@ -212,16 +212,16 @@ async fn main() -> Result<(), DaemonError> {
         }
         i += 1;
     }
-    
+
     let config_start = Instant::now();
     let cfg = config::load_config(&path).map_err(|e| DaemonError::Config(e.to_string()))?;
     let config_parse_ms = config_start.elapsed().as_millis() as u64;
-    
+
     let api_addr = cfg
         .api
         .socket_addr()
         .map_err(|e| DaemonError::Config(format!("invalid api.socket_addr: {e}")))?;
-    
+
     let logger_start = Instant::now();
     init_logging(&cfg);
     let logger_init_ms = logger_start.elapsed().as_millis() as u64;
@@ -231,7 +231,7 @@ async fn main() -> Result<(), DaemonError> {
     let core_start = Instant::now();
     let core = init_core(&cfg).await?;
     let core_init_ms = core_start.elapsed().as_millis() as u64;
-    
+
     let (sfu, sfu_adapter) = init_sfu(&cfg);
     let calls_enabled = cfg.calls.enabled;
     let call_manager = CallManager::new();
@@ -256,7 +256,7 @@ async fn main() -> Result<(), DaemonError> {
     } else {
         None
     };
-    
+
     let state = DaemonState {
         core,
         sfu,
@@ -1290,7 +1290,7 @@ async fn handle_ui_request(
             if let Some(ms) = daemon_ready_ms {
                 map.insert("daemon_ready_ms".to_string(), serde_json::json!(ms));
             }
-            
+
             // Include debug_boot only if debug is enabled
             if let Some(metrics) = &state.boot_metrics {
                 map.insert("debug_boot".to_string(), serde_json::json!(metrics));
